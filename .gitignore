@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+build/
+*.xcodeproj
+.DS_Store
+Package.resolved
+.deploy.env
+Scripts/.build-number
+.claude/
