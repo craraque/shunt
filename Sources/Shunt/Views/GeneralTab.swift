@@ -3,7 +3,7 @@ import NetworkExtension
 
 struct GeneralTab: View {
     @ObservedObject var model: SettingsViewModel
-    @State private var extensionState: String = "unknown"
+    @State private var statusRaw: Int = 0
     @State private var proxyEnabled: Bool = false
     @State private var statusTimer: Timer?
     @State private var busy = false
@@ -11,55 +11,90 @@ struct GeneralTab: View {
     private let services = AppServices.shared
 
     var body: some View {
-        Form {
-            Section("Extension") {
-                LabeledContent("System extension") {
-                    Text(extensionState).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Button("Activate") {
-                        services.extensionManager.activate()
-                    }
-                    Button("Deactivate") {
-                        services.extensionManager.deactivate()
-                    }
-                }
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("General")
+                    .font(.shuntTitle1)
 
-            Section("Proxy") {
-                LabeledContent("Enabled") {
-                    Toggle("", isOn: $proxyEnabled)
-                        .labelsHidden()
-                        .disabled(busy)
-                        .onChange(of: proxyEnabled) { _, newValue in
-                            busy = true
-                            if newValue {
-                                services.proxyManager.enable()
-                            } else {
-                                Task { await services.proxyManager.disable() }
-                            }
-                            // Optimistic — refresh will reconcile
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                                refreshStatus()
-                                busy = false
-                            }
+                StatusCard(
+                    title: statusTitle,
+                    detail: statusDetail,
+                    active: isRouting
+                )
+
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "Proxy")
+                    VStack(spacing: 0) {
+                        FormRow("Enabled") {
+                            Toggle("", isOn: $proxyEnabled)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                                .tint(.signalAmber)
+                                .disabled(busy)
+                                .onChange(of: proxyEnabled) { _, newValue in
+                                    handleToggle(newValue)
+                                }
                         }
+                        Divider()
+                        FormRow("Upstream") {
+                            MonoText(upstreamSummary, color: .secondary)
+                        }
+                        Divider()
+                        FormRow("State") {
+                            MonoText(
+                                statusWord,
+                                color: isRouting ? .pcbGreen : .secondary
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 4)
                 }
-                Text("Changes to Apps or Upstream take effect the next time you re-enable the proxy.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
 
-            Section("About this version") {
-                LabeledContent("Version", value: Self.appVersion)
-                LabeledContent("Build", value: Self.appBuild)
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "System extension")
+                    VStack(spacing: 0) {
+                        FormRow("Status") {
+                            MonoText(
+                                extensionInstalled ? "activated" : "not installed",
+                                color: extensionInstalled ? .pcbGreen : .secondary
+                            )
+                        }
+                        Divider()
+                        HStack(spacing: 8) {
+                            Text("Manage")
+                                .font(.shuntLabel)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 140, alignment: .leading)
+                            Button("Activate") { services.extensionManager.activate() }
+                            Button("Deactivate") { services.extensionManager.deactivate() }
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .padding(.horizontal, 4)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "About this version")
+                    VStack(spacing: 0) {
+                        FormRow("Version") {
+                            MonoText("\(Self.appVersion) · build \(Self.appBuild)", color: .secondary)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                }
+
+                Text("Changes to Apps or Upstream take effect the next time you re-enable the proxy.")
+                    .font(.shuntCaption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 4)
             }
+            .padding(28)
         }
-        .formStyle(.grouped)
         .onAppear {
-            refreshStatus()
+            refresh()
             statusTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-                refreshStatus()
+                refresh()
             }
         }
         .onDisappear {
@@ -68,15 +103,29 @@ struct GeneralTab: View {
         }
     }
 
-    private func refreshStatus() {
-        Task { @MainActor in
-            let raw = await services.proxyManager.statusRaw()
-            extensionState = Self.describe(statusRaw: raw)
-            proxyEnabled = raw == 2 || raw == 3 || raw == 4
+    // MARK: - Derived
+
+    private var isRouting: Bool { statusRaw == 3 }
+    private var isConnecting: Bool { statusRaw == 2 || statusRaw == 4 }
+    private var extensionInstalled: Bool { statusRaw != 0 }
+
+    private var statusTitle: String {
+        if isRouting {
+            let count = model.settings.managedApps.filter(\.enabled).count
+            return "Routing \(count) \(count == 1 ? "app" : "apps")"
         }
+        if isConnecting { return "Connecting…" }
+        if extensionInstalled { return "Proxy idle" }
+        return "Extension not installed"
     }
 
-    private static func describe(statusRaw: Int) -> String {
+    private var statusDetail: String {
+        isRouting || isConnecting
+            ? "via \(upstreamSummary)"
+            : "no traffic is being routed"
+    }
+
+    private var statusWord: String {
         switch statusRaw {
         case 0: return "not configured"
         case 1: return "disconnected"
@@ -84,14 +133,46 @@ struct GeneralTab: View {
         case 3: return "routing"
         case 4: return "reconnecting"
         case 5: return "disconnecting"
-        default: return "unknown (\(statusRaw))"
+        default: return "unknown"
+        }
+    }
+
+    private var upstreamSummary: String {
+        let host = model.settings.upstream.host
+        let port = model.settings.upstream.port
+        let bind = model.settings.upstream.bindInterface
+        if let bind, !bind.isEmpty {
+            return "\(host):\(port) · \(bind)"
+        }
+        return "\(host):\(port)"
+    }
+
+    // MARK: - Refresh + actions
+
+    private func refresh() {
+        Task { @MainActor in
+            let raw = await services.proxyManager.statusRaw()
+            statusRaw = raw
+            proxyEnabled = raw == 2 || raw == 3 || raw == 4
+        }
+    }
+
+    private func handleToggle(_ newValue: Bool) {
+        busy = true
+        if newValue {
+            services.proxyManager.enable()
+        } else {
+            Task { await services.proxyManager.disable() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            refresh()
+            busy = false
         }
     }
 
     private static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
     }
-
     private static var appBuild: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
     }

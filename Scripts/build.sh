@@ -27,6 +27,9 @@ echo "▸ Cleaning previous build"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
+echo "▸ Rendering app icon"
+"$PROJECT_DIR/Scripts/render-icon.sh"
+
 echo "▸ Building Shunt (main app)"
 swift build -c release --arch arm64 --product "$APP_NAME" --package-path "$PROJECT_DIR"
 
@@ -43,6 +46,7 @@ mkdir -p "$APP_BUNDLE/Contents/Library/SystemExtensions/$EXT_BUNDLE_NAME/Content
 
 cp "$PROJECT_DIR/.build/release/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$PROJECT_DIR/Resources/Shunt-Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+cp "$BUILD_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 EXT_PATH="$APP_BUNDLE/Contents/Library/SystemExtensions/$EXT_BUNDLE_NAME"
 cp "$PROJECT_DIR/.build/release/ShuntProxy" "$EXT_PATH/Contents/MacOS/ShuntProxy"

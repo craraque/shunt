@@ -75,13 +75,28 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
             return false
         }
 
-        logger.info("CLAIM \(source, privacy: .public) → \(hostEndpoint.hostname, privacy: .public):\(port, privacy: .public)")
+        // Prefer the pre-resolution hostname over the already-resolved IP in
+        // remoteEndpoint. macOS does DNS on the host by default, so by the
+        // time the flow reaches us remoteEndpoint.hostname is an IP literal.
+        // Forwarding the hostname via SOCKS5 ATYP 0x03 lets the guest's DNS
+        // (and any tunnel/firewall it sits behind, e.g. Zscaler) see the
+        // domain name and apply hostname-based policy (SSL inspection bypass
+        // for Microsoft 365, category classification, etc).
+        let preResolvedHost = tcp.remoteHostname
+        let targetHost: String
+        if let preResolvedHost, !preResolvedHost.isEmpty {
+            targetHost = preResolvedHost
+        } else {
+            targetHost = hostEndpoint.hostname
+        }
+
+        logger.info("CLAIM \(source, privacy: .public) → \(targetHost, privacy: .public):\(port, privacy: .public) (endpoint=\(hostEndpoint.hostname, privacy: .public))")
         let bridge = SOCKS5Bridge(
             flow: tcp,
             socksHost: upstream.host,
             socksPort: upstream.port,
             bindInterface: upstream.bindInterface,
-            remoteHost: hostEndpoint.hostname,
+            remoteHost: targetHost,
             remotePort: port,
             logger: logger
         )

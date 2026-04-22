@@ -6,35 +6,54 @@ import ShuntCore
 struct AdvancedTab: View {
     @ObservedObject var model: SettingsViewModel
     @State private var statusMessage: String?
+    @State private var statusIsError = false
 
     private let store = AppServices.shared.settingsStore
 
     var body: some View {
-        Form {
-            Section("Backup") {
-                HStack {
-                    Button("Export Settings…") { exportSettings() }
-                    Button("Import Settings…") { importSettings() }
-                }
-                Text("Export saves your managed apps and upstream proxy config as a JSON file. Import replaces current settings with the contents of the file.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("Advanced")
+                    .font(.shuntTitle1)
 
-            if let status = statusMessage {
-                Section { Text(status).font(.footnote) }
-            }
-
-            Section("Troubleshooting") {
-                Button("Reveal Settings File in Finder") {
-                    revealSettingsFile()
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "Backup")
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Button("Export Settings…") { exportSettings() }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.signalAmber)
+                            Button("Import Settings…") { importSettings() }
+                        }
+                        Text("Export saves your managed apps and upstream proxy config as a JSON file. Import replaces current settings with the contents of the file.")
+                            .font(.shuntCaption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Text("The settings file lives in the App Group container and is used as a backup of what the app is storing.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+
+                if let msg = statusMessage {
+                    HStack(spacing: 6) {
+                        Image(systemName: statusIsError ? "exclamationmark.triangle" : "checkmark")
+                            .foregroundStyle(statusIsError ? .orange : Color.pcbGreen)
+                        Text(msg)
+                            .font(.shuntCaption)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "Troubleshooting")
+                    Button("Reveal Settings File in Finder") {
+                        revealSettingsFile()
+                    }
+                    Text("The settings file lives in the App Group container. Useful for diagnostics or copying config between devices.")
+                        .font(.shuntCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .padding(28)
         }
-        .formStyle(.grouped)
     }
 
     private func exportSettings() {
@@ -46,8 +65,10 @@ struct AdvancedTab: View {
             let data = try store.exportJSON(model.settings)
             try data.write(to: url)
             statusMessage = "Exported to \(url.lastPathComponent)"
+            statusIsError = false
         } catch {
             statusMessage = "Export failed: \(error.localizedDescription)"
+            statusIsError = true
         }
     }
 
@@ -62,8 +83,10 @@ struct AdvancedTab: View {
             model.settings = imported
             model.save()
             statusMessage = "Imported \(imported.managedApps.count) app(s)"
+            statusIsError = false
         } catch {
             statusMessage = "Import failed: \(error.localizedDescription)"
+            statusIsError = true
         }
     }
 

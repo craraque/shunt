@@ -12,7 +12,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: content)
         window.title = "Shunt Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 560, height: 460))
+        window.setContentSize(NSSize(width: 620, height: 520))
         window.isReleasedWhenClosed = false
         window.center()
 

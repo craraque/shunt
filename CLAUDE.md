@@ -76,3 +76,15 @@ System extension must be embedded at `Contents/Library/SystemExtensions/` inside
 - `tasks/todo.md` — live plan.
 - `tasks/lessons.md` — corrections from the user (create on first correction).
 - `docs/RESEARCH.md` — research and architecture source of truth. Read before architectural changes.
+- `DESIGN.md` — design system source of truth. Read before any UI/visual change.
+
+## Design System
+
+Always read `DESIGN.md` before making any visual or UI decision. All font choices, colors, spacing, iconography, and aesthetic direction are defined there. Do not deviate without explicit user approval. When reviewing code, flag anything that doesn't match `DESIGN.md`.
+
+Quick reference:
+- **Aesthetic:** Precision Utility — electrical schematic meets macOS HIG.
+- **Fonts:** SF Pro (UI), SF Mono with tabular-nums (network data: IPs, ports, bundle IDs).
+- **Colors:** Signal Amber `#E8860F` (brand), PCB Green `#22C55E` (routing-active only), system neutrals.
+- **No gradients in UI** (icon background excepted).
+- **No custom animations in v0.1** — system transitions only.

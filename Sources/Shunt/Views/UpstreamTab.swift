@@ -9,47 +9,89 @@ struct UpstreamTab: View {
     @State private var availableInterfaces: [String] = []
 
     var body: some View {
-        Form {
-            Section("SOCKS5 Upstream") {
-                TextField("Host", text: $host, prompt: Text("10.211.55.5 or proxy.example.com"))
-                TextField("Port", text: $portText, prompt: Text("1080"))
-                    .frame(maxWidth: 120)
-            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("Upstream")
+                    .font(.shuntTitle1)
 
-            Section("Interface binding") {
-                Picker("Bind to", selection: $bindInterface) {
-                    Text("None (use routing table)").tag("")
-                    ForEach(availableInterfaces, id: \.self) { name in
-                        Text(name).tag(name)
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "SOCKS5 endpoint")
+                    VStack(spacing: 0) {
+                        FormRow("Host") {
+                            TextField("10.211.55.5", text: $host)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.shuntMonoData)
+                                .frame(width: 260)
+                        }
+                        Divider()
+                        FormRow("Port") {
+                            TextField("1080", text: $portText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.shuntMonoData)
+                                .frame(width: 120)
+                        }
                     }
+                    .padding(.horizontal, 4)
                 }
-                Text("Select an interface only when the upstream lives on a virtual network that is unreachable via the primary network interface (e.g. a Parallels shared network on bridge100).")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
 
-            Section {
-                HStack {
-                    Button("Apply") {
-                        apply()
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(label: "Interface binding")
+                    VStack(spacing: 0) {
+                        FormRow("Bind to") {
+                            Picker("", selection: $bindInterface) {
+                                Text("None (use routing table)").tag("")
+                                ForEach(availableInterfaces, id: \.self) { name in
+                                    Text(name).tag(name).font(.shuntMonoData)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 260, alignment: .leading)
+                            .font(.shuntMonoData)
+                        }
                     }
-                    .keyboardShortcut(.defaultAction)
+                    .padding(.horizontal, 4)
+
+                    Text("Select an interface only when the upstream is unreachable via the primary NIC — e.g. a Parallels shared network on `bridge100`.")
+                        .font(.shuntCaption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Apply") { apply() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.signalAmber)
+                        .keyboardShortcut(.defaultAction)
 
                     Button("Test Connection") {
                         apply()
                         model.testConnection()
                     }
-
                     Spacer()
                 }
+
                 if let result = model.testConnectionResult {
-                    Text(result)
-                        .font(.footnote)
-                        .foregroundStyle(result.contains("OK") ? .green : .secondary)
+                    HStack(spacing: 8) {
+                        if result.contains("OK") {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.pcbGreen)
+                        } else if result.hasPrefix("Testing") {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        Text(result)
+                            .font(.shuntMonoData)
+                            .foregroundStyle(result.contains("OK") ? Color.pcbGreen : .secondary)
+                    }
+                    .padding(.top, 2)
                 }
             }
+            .padding(28)
         }
-        .formStyle(.grouped)
         .onAppear {
             host = model.settings.upstream.host
             portText = String(model.settings.upstream.port)
@@ -70,14 +112,11 @@ struct UpstreamTab: View {
 
     private func refreshInterfaces() {
         availableInterfaces = Self.listInterfaces()
-        // Make sure the current value appears even if the interface was not
-        // detected yet (e.g. Parallels VM not running when the tab opens).
         if !bindInterface.isEmpty && !availableInterfaces.contains(bindInterface) {
             availableInterfaces.append(bindInterface)
         }
     }
 
-    /// Enumerate UP IPv4 interfaces the user can bind to.
     private static func listInterfaces() -> [String] {
         var result = Set<String>()
         var ifaddr: UnsafeMutablePointer<ifaddrs>?

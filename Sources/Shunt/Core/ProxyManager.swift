@@ -47,16 +47,55 @@ final class ProxyManager {
                         Log.error("reload failed: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
                         return
                     }
-                    Log.info("reload succeeded, starting tunnel")
-                    do {
-                        try manager.connection.startVPNTunnel()
-                        Log.info("startVPNTunnel OK")
-                    } catch {
-                        let ns = error as NSError
-                        Log.error("startVPNTunnel failed: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
+                    // startVPNTunnel on an already-running tunnel is a no-op,
+                    // so the provider never re-reads the new providerConfiguration.
+                    // When the tunnel is already up we must stopVPNTunnel first,
+                    // wait for the status to become .disconnected, then start again.
+                    let status = manager.connection.status
+                    let alreadyRunning = status != .disconnected && status != .invalid
+                    if alreadyRunning {
+                        Log.info("tunnel already running (status=\(status.rawValue)) — restarting to pick up new providerConfiguration")
+                        manager.connection.stopVPNTunnel()
+                        self.waitForDisconnected(manager) {
+                            Self.startTunnel(manager)
+                        }
+                    } else {
+                        Log.info("reload succeeded, starting tunnel")
+                        Self.startTunnel(manager)
                     }
                 }
             }
+        }
+    }
+
+    private static func startTunnel(_ manager: NETransparentProxyManager) {
+        do {
+            try manager.connection.startVPNTunnel()
+            Log.info("startVPNTunnel OK")
+        } catch {
+            let ns = error as NSError
+            Log.error("startVPNTunnel failed: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
+        }
+    }
+
+    /// Poll connection.status until it becomes .disconnected, up to ~5 s.
+    /// NE has no native completion callback for stop; polling is the standard
+    /// recipe (see TN3120 sample code).
+    private func waitForDisconnected(
+        _ manager: NETransparentProxyManager,
+        attempts: Int = 0,
+        completion: @escaping () -> Void
+    ) {
+        let status = manager.connection.status
+        if status == .disconnected || status == .invalid || attempts >= 50 {
+            if attempts >= 50 {
+                Log.error("timed out waiting for disconnected (status=\(status.rawValue)) — starting anyway")
+            }
+            completion()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.waitForDisconnected(manager, attempts: attempts + 1, completion: completion)
         }
     }
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B2A28"/>
+      <stop offset="1" stop-color="#1A1A19"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="url(#bg)"/>
+  <!-- Main track: two parallel rails (thicker for legibility at small sizes) -->
+  <line x1="20" y1="100" x2="140" y2="100" stroke="#F2F1EE" stroke-width="6" stroke-linecap="round"/>
+  <line x1="20" y1="118" x2="140" y2="118" stroke="#F2F1EE" stroke-width="6" stroke-linecap="round"/>
+  <!-- Switch point -->
+  <circle cx="78" cy="109" r="6" fill="#E8860F"/>
+  <!-- Siding: two parallel rails diverging upward (Signal Amber) -->
+  <path d="M 72 100 Q 94 72 132 50" stroke="#E8860F" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M 84 118 Q 106 90 140 68" stroke="#E8860F" stroke-width="6" fill="none" stroke-linecap="round"/>
+</svg>

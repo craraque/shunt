@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B2A28"/>
+      <stop offset="1" stop-color="#1A1A19"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="url(#bg)"/>
+  <!-- Main track cross ties (sleepers) -->
+  <g opacity="0.4">
+    <rect x="24" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+    <rect x="40" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+    <rect x="56" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+    <rect x="100" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+    <rect x="116" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+    <rect x="132" y="94" width="3" height="24" fill="#E4E0D8" rx="1"/>
+  </g>
+  <!-- Main track: two parallel rails -->
+  <line x1="22" y1="99" x2="138" y2="99" stroke="#F2F1EE" stroke-width="3" stroke-linecap="round"/>
+  <line x1="22" y1="113" x2="138" y2="113" stroke="#F2F1EE" stroke-width="3" stroke-linecap="round"/>
+  <!-- Switch point -->
+  <circle cx="78" cy="106" r="3.5" fill="#E8860F"/>
+  <!-- Siding: two parallel rails diverging upward (Signal Amber) -->
+  <path d="M 72 99 Q 92 72 126 52" stroke="#E8860F" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M 84 113 Q 104 86 138 66" stroke="#E8860F" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <!-- Siding ties (angled) -->
+  <g opacity="0.5">
+    <rect x="96" y="62" width="3" height="22" fill="#FBB040" rx="1" transform="rotate(-35 97.5 73)"/>
+    <rect x="116" y="52" width="3" height="22" fill="#FBB040" rx="1" transform="rotate(-30 117.5 63)"/>
+  </g>
+</svg>

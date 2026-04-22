@@ -7,31 +7,56 @@ struct AppsTab: View {
     @State private var selection: UUID?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text("Apps listed here will have their outbound traffic routed through the configured upstream proxy. All other apps use your normal network.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding([.horizontal, .top])
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Apps")
+                    .font(.shuntTitle1)
+                Text("Apps listed here have their outbound traffic routed through the configured upstream. All others use the host network.")
+                    .font(.shuntBody)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 16)
 
-            List(selection: $selection) {
-                ForEach($model.settings.managedApps) { $app in
-                    AppRow(app: $app) {
-                        model.save()
+            // App list card
+            ScrollView {
+                VStack(spacing: 0) {
+                    if model.settings.managedApps.isEmpty {
+                        EmptyAppsState()
+                            .padding(.vertical, 40)
+                    } else {
+                        ForEach($model.settings.managedApps) { $app in
+                            AppRow(app: $app, isSelected: selection == app.id) {
+                                model.save()
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { selection = app.id }
+                            if app.id != model.settings.managedApps.last?.id {
+                                Divider().padding(.leading, 52)
+                            }
+                        }
                     }
                 }
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.shuntSeparator, lineWidth: 1)
+                )
             }
-            .listStyle(.inset)
+            .padding(.horizontal, 28)
 
-            Divider()
-
-            HStack {
+            // Action bar
+            HStack(spacing: 8) {
                 Button {
                     pickApp()
                 } label: {
                     Label("Add from Applications…", systemImage: "plus")
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.signalAmber)
 
                 Button {
                     addManualEntry()
@@ -41,7 +66,7 @@ struct AppsTab: View {
 
                 Spacer()
 
-                Button {
+                Button(role: .destructive) {
                     if let id = selection {
                         model.removeApp(id: id)
                         selection = nil
@@ -51,7 +76,7 @@ struct AppsTab: View {
                 }
                 .disabled(selection == nil)
             }
-            .padding(10)
+            .padding(16)
         }
     }
 
@@ -80,46 +105,74 @@ struct AppsTab: View {
     }
 }
 
+// MARK: - App row
+
 private struct AppRow: View {
     @Binding var app: ManagedApp
+    let isSelected: Bool
     let onCommit: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             icon
-                .frame(width: 24, height: 24)
+                .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
                 TextField("Display name", text: $app.displayName, onCommit: onCommit)
                     .textFieldStyle(.plain)
-                    .font(.body)
+                    .font(.shuntLabelStrong)
                 TextField("com.example.app", text: $app.bundleID, onCommit: onCommit)
                     .textFieldStyle(.plain)
-                    .font(.caption)
+                    .font(.shuntMonoData)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
+            StatusPill(kind: app.enabled ? .active : .idle)
+
             Toggle("", isOn: $app.enabled)
+                .toggleStyle(.switch)
                 .labelsHidden()
+                .tint(.signalAmber)
                 .onChange(of: app.enabled) { _, _ in onCommit() }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(isSelected ? Color.signalAmber.opacity(0.1) : .clear)
     }
 
+    @ViewBuilder
     private var icon: some View {
-        Group {
-            if let path = app.appPath, FileManager.default.fileExists(atPath: path) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: path))
-                    .resizable()
-                    .interpolation(.high)
-            } else {
-                Image(systemName: "app.dashed")
-                    .resizable()
-                    .foregroundStyle(.secondary)
-            }
+        if let path = app.appPath, FileManager.default.fileExists(atPath: path) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        } else {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.secondary.opacity(0.12))
+                .overlay(
+                    Image(systemName: "app.dashed")
+                        .foregroundStyle(.secondary)
+                )
         }
-        .aspectRatio(contentMode: .fit)
+    }
+}
+
+private struct EmptyAppsState: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+            Text("No apps configured")
+                .font(.shuntLabelStrong)
+                .foregroundStyle(.secondary)
+            Text("Add an app to route its traffic through the upstream.")
+                .font(.shuntCaption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }

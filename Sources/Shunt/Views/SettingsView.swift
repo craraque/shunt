@@ -6,13 +6,13 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralTab(model: model)
-                .tabItem { Label("General", systemImage: "gear") }
+                .tabItem { Label("General", systemImage: "gauge.with.needle") }
 
             AppsTab(model: model)
-                .tabItem { Label("Apps", systemImage: "app.badge") }
+                .tabItem { Label("Apps", systemImage: "square.grid.2x2") }
 
             UpstreamTab(model: model)
-                .tabItem { Label("Upstream", systemImage: "arrow.up.right.square") }
+                .tabItem { Label("Upstream", systemImage: "arrow.up.right") }
 
             AdvancedTab(model: model)
                 .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
@@ -20,7 +20,8 @@ struct SettingsView: View {
             AboutTab()
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 560, height: 460)
+        .frame(width: 620, height: 520)
+        .tint(.signalAmber)
         .onAppear { model.reload() }
     }
 }

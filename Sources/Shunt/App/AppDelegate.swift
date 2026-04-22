@@ -116,23 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func renderStatusIcon() {
         guard let button = statusItem.button else { return }
-        let symbolName = "arrow.triangle.branch"
-        let accessibility = proxyIsRouting
-            ? "Shunt — routing"
-            : (extensionActivated ? "Shunt — idle" : "Shunt — extension not installed")
-
-        if proxyIsRouting {
-            // Color the symbol green when traffic is actively being routed.
-            let config = NSImage.SymbolConfiguration(paletteColors: [.systemGreen])
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility)?
-                .withSymbolConfiguration(config)
-            image?.isTemplate = false
-            button.image = image
-        } else {
-            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibility)
-            image?.isTemplate = true
-            button.image = image
-        }
+        button.image = proxyIsRouting ? MenubarIcons.routing() : MenubarIcons.idle()
     }
 
     private var proxyIsRouting: Bool {
