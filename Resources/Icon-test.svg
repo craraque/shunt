@@ -6,14 +6,16 @@
       <stop offset="1" stop-color="#1A1A19"/>
     </linearGradient>
   </defs>
-  <!-- Rounded square chassis (Apple HIG 22% corner radius) -->
   <rect width="160" height="160" rx="36" fill="url(#bg)"/>
 
-  <!-- Top rail (main line) — receded, inactive -->
+  <!-- ShuntTest: same geometry as Shunt, Chassis palette (silver + cyan)
+       to visually distinguish the diagnostic CLI from the production app. -->
+
+  <!-- Top rail (main line) — receded -->
   <line x1="22" y1="76" x2="138" y2="76"
         stroke="#F2F1EE" stroke-width="7" stroke-linecap="round" opacity="0.35"/>
 
-  <!-- Top rail cross-ties (very subtle, indicate "this is track") -->
+  <!-- Top rail ties (subtle) -->
   <g opacity="0.18" fill="#F2F1EE">
     <rect x="30" y="68" width="3" height="16" rx="1"/>
     <rect x="50" y="68" width="3" height="16" rx="1"/>
@@ -22,12 +24,12 @@
     <rect x="130" y="68" width="3" height="16" rx="1"/>
   </g>
 
-  <!-- Bottom rail (diverted line) — active, Filament accent -->
+  <!-- Bottom rail (diverted) — silver accent -->
   <line x1="22" y1="104" x2="138" y2="104"
-        stroke="#FB923C" stroke-width="7" stroke-linecap="round"/>
+        stroke="#E5E5E4" stroke-width="7" stroke-linecap="round"/>
 
-  <!-- Bottom rail cross-ties (warmer, more visible) -->
-  <g opacity="0.35" fill="#FB923C">
+  <!-- Bottom rail ties -->
+  <g opacity="0.35" fill="#E5E5E4">
     <rect x="30" y="96" width="3" height="16" rx="1"/>
     <rect x="50" y="96" width="3" height="16" rx="1"/>
     <rect x="90" y="96" width="3" height="16" rx="1"/>
@@ -35,16 +37,20 @@
     <rect x="130" y="96" width="3" height="16" rx="1"/>
   </g>
 
-  <!-- Switch diagonal connecting the two rails -->
+  <!-- Switch diagonal — silver -->
   <line x1="60" y1="76" x2="78" y2="104"
-        stroke="#FB923C" stroke-width="6" stroke-linecap="round"/>
+        stroke="#E5E5E4" stroke-width="6" stroke-linecap="round"/>
 
-  <!-- Switch-point dot (hero element) -->
-  <circle cx="69" cy="90" r="7" fill="#FB923C"/>
-  <!-- Inner highlight on the dot for depth (single subtle ring, not a gradient) -->
-  <circle cx="69" cy="90" r="3" fill="#FED7AA"/>
+  <!-- Switch-point dot -->
+  <circle cx="69" cy="90" r="7" fill="#E5E5E4"/>
+  <circle cx="69" cy="90" r="3" fill="#F5F5F4"/>
 
-  <!-- Terminus cap — the "routing live" signal at the end of the active rail -->
-  <circle cx="138" cy="104" r="6" fill="#4ADE80"/>
-  <circle cx="138" cy="104" r="2.5" fill="#BBF7D0"/>
+  <!-- Terminus cap — cyan diagnostic signal -->
+  <circle cx="138" cy="104" r="6" fill="#22D3EE"/>
+  <circle cx="138" cy="104" r="2.5" fill="#A5F3FC"/>
+
+  <!-- Diagnostic/test marker: small corner tick so a quick glance tells prod
+       from test even when both icons are tiny. Monospace T, bottom-left. -->
+  <text x="18" y="148" font-family="SF Mono, Menlo, monospace" font-size="14"
+        font-weight="600" fill="#22D3EE" opacity="0.85">T</text>
 </svg>

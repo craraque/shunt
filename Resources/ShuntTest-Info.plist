@@ -8,6 +8,8 @@
     <string>com.craraque.shunt.test</string>
     <key>CFBundleName</key>
     <string>ShuntTest</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>

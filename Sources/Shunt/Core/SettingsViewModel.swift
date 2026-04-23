@@ -13,13 +13,48 @@ final class SettingsViewModel: ObservableObject {
     init(store: SettingsStore = AppServices.shared.settingsStore) {
         self.store = store
         self.settings = store.load()
+        resolveMissingAppPaths()
     }
 
     func reload() {
         settings = store.load()
+        resolveMissingAppPaths()
+    }
+
+    /// For any managed app that lacks an `appPath` (seeded entries or rows created
+    /// by bundle ID before LaunchServices was queried), resolve the path via
+    /// `NSWorkspace` and persist it so the row can render its icon. Applies to
+    /// both the legacy `managedApps` list and the apps nested inside `rules`.
+    private func resolveMissingAppPaths() {
+        var changed = false
+        for idx in settings.managedApps.indices where
+            settings.managedApps[idx].appPath == nil &&
+            !settings.managedApps[idx].bundleID.isEmpty
+        {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: settings.managedApps[idx].bundleID) {
+                settings.managedApps[idx].appPath = url.path
+                changed = true
+            }
+        }
+        for rIdx in settings.rules.indices {
+            for aIdx in settings.rules[rIdx].apps.indices where
+                settings.rules[rIdx].apps[aIdx].appPath == nil &&
+                !settings.rules[rIdx].apps[aIdx].bundleID.isEmpty
+            {
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: settings.rules[rIdx].apps[aIdx].bundleID) {
+                    settings.rules[rIdx].apps[aIdx].appPath = url.path
+                    changed = true
+                }
+            }
+        }
+        if changed { try? store.save(settings) }
     }
 
     func save() {
+        // Rules are the ground truth (post-3d.6). Derive `managedApps` so the
+        // v1 extension binary (which only reads managedApps) keeps working
+        // until it is rebuilt with the rule-aware code in 3d.7.
+        settings.managedApps = ShuntSettings.deriveManagedApps(from: settings.rules)
         do {
             try store.save(settings)
             lastError = nil
@@ -28,27 +63,7 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Apps
-
-    func addApp(bundleID: String, displayName: String, appPath: String?) {
-        guard !bundleID.isEmpty else { return }
-        if settings.managedApps.contains(where: { $0.bundleID == bundleID }) { return }
-        settings.managedApps.append(
-            ManagedApp(bundleID: bundleID, displayName: displayName, appPath: appPath, enabled: true)
-        )
-        save()
-    }
-
-    func removeApp(id: UUID) {
-        settings.managedApps.removeAll { $0.id == id }
-        save()
-    }
-
-    func toggleApp(id: UUID) {
-        guard let idx = settings.managedApps.firstIndex(where: { $0.id == id }) else { return }
-        settings.managedApps[idx].enabled.toggle()
-        save()
-    }
+    // MARK: - Legacy managedApps ops (still used by ProxyManager logging only)
 
     /// Extract bundle info from a user-selected .app bundle.
     func importAppBundle(at url: URL) -> (bundleID: String, name: String)? {
@@ -62,6 +77,205 @@ final class SettingsViewModel: ObservableObject {
             ?? (plist["CFBundleName"] as? String)
             ?? url.deletingPathExtension().lastPathComponent
         return (bundleID, name)
+    }
+
+    /// Scans the `.app` bundle at `url` for nested `.app` helper bundles
+    /// whose `CFBundleIdentifier` shares the parent's reverse-DNS prefix
+    /// (e.g. `com.google.Chrome.helper` is a helper of `com.google.Chrome`).
+    ///
+    /// Chromium-based browsers and Electron apps route network traffic through
+    /// helper processes rather than the main app, so `NEAppProxyFlow` attributes
+    /// those flows to the helper's bundle id. Unless the helpers are added to
+    /// a rule too, the extension never claims the real traffic.
+    ///
+    /// Returns the helpers sorted by bundle id for a stable alert.
+    struct HelperBundle: Hashable {
+        let bundleID: String
+        let name: String
+        let path: String
+    }
+    func findHelperBundles(in appURL: URL, parentBundleID: String) -> [HelperBundle] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: appURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        var found: [HelperBundle] = []
+        var seenIDs = Set<String>()
+        let parentPrefix = parentBundleID + "."
+
+        for case let subURL as URL in enumerator where subURL.pathExtension == "app" {
+            // Skip the outer bundle itself.
+            guard subURL != appURL else { continue }
+
+            let infoURL = subURL.appendingPathComponent("Contents/Info.plist")
+            guard let data = try? Data(contentsOf: infoURL),
+                  let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let bundleID = plist["CFBundleIdentifier"] as? String,
+                  bundleID != parentBundleID,
+                  bundleID.hasPrefix(parentPrefix),
+                  !seenIDs.contains(bundleID)
+            else { continue }
+
+            seenIDs.insert(bundleID)
+            let name = (plist["CFBundleDisplayName"] as? String)
+                ?? (plist["CFBundleName"] as? String)
+                ?? subURL.lastPathComponent
+            found.append(HelperBundle(bundleID: bundleID, name: name, path: subURL.path))
+        }
+        return found.sorted { $0.bundleID < $1.bundleID }
+    }
+
+    // MARK: - Rule ops (post-3d.6)
+
+    /// Insert an empty rule at the end of the list and return its id.
+    @discardableResult
+    func addRule() -> UUID {
+        let rule = Rule(name: "New rule", enabled: true, apps: [], hosts: [], action: .route)
+        settings.rules.append(rule)
+        save()
+        return rule.id
+    }
+
+    func removeRules(ids: Set<UUID>) {
+        settings.rules.removeAll { ids.contains($0.id) }
+        save()
+    }
+
+    func toggleRule(id: UUID) {
+        guard let idx = settings.rules.firstIndex(where: { $0.id == id }) else { return }
+        settings.rules[idx].enabled.toggle()
+        save()
+    }
+
+    func updateRuleName(id: UUID, name: String) {
+        guard let idx = settings.rules.firstIndex(where: { $0.id == id }) else { return }
+        settings.rules[idx].name = name
+        save()
+    }
+
+    func updateRuleAction(id: UUID, action: Rule.Action) {
+        guard let idx = settings.rules.firstIndex(where: { $0.id == id }) else { return }
+        settings.rules[idx].action = action
+        save()
+    }
+
+    /// Fuse selected rules into a single rule. Takes the anchor (first) rule's
+    /// name + id + action, and unions its apps and hosts with the others'.
+    /// Others are deleted. Returns the anchor rule id, or nil if fewer than 2
+    /// rules are selected.
+    @discardableResult
+    func mergeRules(ids: Set<UUID>) -> UUID? {
+        guard ids.count >= 2 else { return nil }
+        let selected = settings.rules.filter { ids.contains($0.id) }
+        guard let anchor = selected.first else { return nil }
+
+        var mergedApps: [ManagedApp] = []
+        var seenAppIDs = Set<String>()
+        for rule in selected {
+            for app in rule.apps where !seenAppIDs.contains(app.bundleID) {
+                seenAppIDs.insert(app.bundleID)
+                mergedApps.append(app)
+            }
+        }
+
+        var mergedHosts: [HostPattern] = []
+        var seenHosts = Set<String>()
+        for rule in selected {
+            for host in rule.hosts {
+                let key = "\(host.kind.rawValue):\(host.pattern.lowercased())"
+                guard !seenHosts.contains(key) else { continue }
+                seenHosts.insert(key)
+                mergedHosts.append(host)
+            }
+        }
+
+        let merged = Rule(
+            id: anchor.id,
+            name: anchor.name,
+            enabled: selected.contains { $0.enabled },
+            apps: mergedApps,
+            hosts: mergedHosts,
+            action: anchor.action
+        )
+
+        // Replace anchor in place, drop the rest.
+        let otherIDs = ids.subtracting([anchor.id])
+        settings.rules.removeAll { otherIDs.contains($0.id) }
+        if let anchorIdx = settings.rules.firstIndex(where: { $0.id == anchor.id }) {
+            settings.rules[anchorIdx] = merged
+        }
+        save()
+        return anchor.id
+    }
+
+    // MARK: - Apps inside a rule
+
+    /// Add an app (bundle+name+path) to the given rule, unless already present.
+    func addAppToRule(ruleID: UUID, bundleID: String, displayName: String, appPath: String?) {
+        guard !bundleID.isEmpty,
+              let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        if settings.rules[ruleIdx].apps.contains(where: { $0.bundleID == bundleID }) { return }
+        settings.rules[ruleIdx].apps.append(
+            ManagedApp(bundleID: bundleID, displayName: displayName, appPath: appPath, enabled: true)
+        )
+        save()
+    }
+
+    /// Append a blank draft app row inside a rule and return its id so the UI
+    /// can focus the bundle-ID TextField.
+    @discardableResult
+    func addEmptyAppToRule(ruleID: UUID) -> UUID? {
+        guard let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return nil }
+        let app = ManagedApp(bundleID: "", displayName: "", appPath: nil, enabled: true)
+        settings.rules[ruleIdx].apps.append(app)
+        save()
+        return app.id
+    }
+
+    func removeAppFromRule(ruleID: UUID, appID: UUID) {
+        guard let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        settings.rules[ruleIdx].apps.removeAll { $0.id == appID }
+        save()
+    }
+
+    /// Called when the user commits a bundle ID on a draft app inside a rule.
+    /// Resolves path + display name via LaunchServices.
+    func enrichAppInRule(ruleID: UUID, appID: UUID) {
+        guard let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }),
+              let appIdx = settings.rules[ruleIdx].apps.firstIndex(where: { $0.id == appID })
+        else { return }
+        let trimmed = settings.rules[ruleIdx].apps[appIdx].bundleID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.rules[ruleIdx].apps[appIdx].bundleID = trimmed
+        guard !trimmed.isEmpty else { save(); return }
+        if settings.rules[ruleIdx].apps[appIdx].appPath == nil,
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed) {
+            settings.rules[ruleIdx].apps[appIdx].appPath = url.path
+            if settings.rules[ruleIdx].apps[appIdx].displayName.isEmpty,
+               let info = importAppBundle(at: url) {
+                settings.rules[ruleIdx].apps[appIdx].displayName = info.name
+            }
+        }
+        save()
+    }
+
+    // MARK: - Hosts inside a rule
+
+    @discardableResult
+    func addHostToRule(ruleID: UUID) -> UUID? {
+        guard let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return nil }
+        let host = HostPattern(kind: .suffix, pattern: "")
+        settings.rules[ruleIdx].hosts.append(host)
+        save()
+        return host.id
+    }
+
+    func removeHostFromRule(ruleID: UUID, hostID: UUID) {
+        guard let ruleIdx = settings.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        settings.rules[ruleIdx].hosts.removeAll { $0.id == hostID }
+        save()
     }
 
     // MARK: - Upstream

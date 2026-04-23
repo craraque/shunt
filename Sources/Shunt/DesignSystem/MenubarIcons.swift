@@ -1,20 +1,34 @@
 import AppKit
+import SwiftUI
 
-// Shunt design system — menubar icon rendering.
-// Draws the railway-shunt mark inline via NSBezierPath so we don't ship a
-// separate PNG asset. Two states: idle (monochrome template that follows
-// menubar theme) and routing (Signal Amber siding + PCB Green live dot).
+// Shunt menubar mark — "Turnout (top-down)".
+//
+// A railway switch as seen from above: two parallel horizontal rails with a
+// short diagonal connector that diverts traffic from one to the other. The
+// switch-point dot sits at the diagonal's midpoint.
+//
+// Horizontal composition, symmetric on the horizontal axis. No vertical
+// elongation, no ambiguous silhouette. The silhouette reads as "two tracks"
+// instantly, and the diagonal + dot communicates "switch" without needing
+// to know the metaphor.
+//
+// Idle: all four elements at labelColor, isTemplate=true.
+// Routing: top rail recedes; bottom rail + diagonal + switch dot adopt the
+// theme accent; a terminus cap at the right end of the bottom rail adopts
+// the theme status-active color.
 
 enum MenubarIcons {
-    /// 18×18pt, monochrome, isTemplate=true. Follows menubar theme color.
+
+    /// 18×18pt monochrome template. Follows menubar theme color.
     static func idle() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
             drawMark(
-                mainRailsColor: .black,
-                sidingColor: .black,
+                topRailColor: .black,
+                bottomRailColor: .black,
+                diagonalColor: .black,
                 switchDotColor: .black,
-                liveDot: nil
+                terminusCap: nil
             )
             return true
         }
@@ -23,19 +37,19 @@ enum MenubarIcons {
         return image
     }
 
-    /// 18×18pt, colored. Signal Amber siding + PCB Green "live" dot. Not a
-    /// template — the tint persists regardless of menubar theme so the active
-    /// state is unambiguous.
-    static func routing() -> NSImage {
+    /// 18×18pt colored. Top rail recedes (main route, traffic not diverted);
+    /// bottom rail + diagonal + switch dot take the theme accent; terminus cap
+    /// at right end of bottom rail adopts theme status-active.
+    static func routing(accent: NSColor, statusActive: NSColor) -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            // Main rails stay in a soft neutral so they don't compete with the
-            // amber siding. Use labelColor so it still adapts to theme.
+            let recede = NSColor.labelColor.withAlphaComponent(0.40)
             drawMark(
-                mainRailsColor: NSColor.labelColor.withAlphaComponent(0.55),
-                sidingColor: NSColor(red: 232/255, green: 134/255, blue: 15/255, alpha: 1),
-                switchDotColor: NSColor(red: 232/255, green: 134/255, blue: 15/255, alpha: 1),
-                liveDot: NSColor(red: 34/255, green: 197/255, blue: 94/255, alpha: 1)
+                topRailColor: recede,
+                bottomRailColor: accent,
+                diagonalColor: accent,
+                switchDotColor: accent,
+                terminusCap: statusActive
             )
             return true
         }
@@ -44,68 +58,85 @@ enum MenubarIcons {
         return image
     }
 
-    /// Draws the railway shunt mark onto the current NSGraphicsContext at 18×18.
-    ///
-    /// Geometry is a simplified version of Resources/Icon-compact.svg, rescaled
-    /// to 18×18 drawing coordinates.
+    /// Convenience: render routing() using a ShuntTheme.
+    static func routing(theme: ShuntTheme) -> NSImage {
+        // Menubar background is fixed by macOS, so themes whose light accent
+        // is near-black (Chassis) must use their dark variant for legibility.
+        let useDark = theme.id == "chassis"
+        let accent = useDark ? theme.accentDark : theme.accentLight
+        let live = useDark ? theme.statusActiveDark : theme.statusActiveLight
+        return routing(
+            accent: NSColor(accent),
+            statusActive: NSColor(live)
+        )
+    }
+
+    // MARK: - Drawing
+
+    /// Draws the top-down turnout. Coordinates are expressed in the 18-pt
+    /// top-left-origin space; Y is flipped here to AppKit's bottom-left
+    /// origin.
     private static func drawMark(
-        mainRailsColor: NSColor,
-        sidingColor: NSColor,
+        topRailColor: NSColor,
+        bottomRailColor: NSColor,
+        diagonalColor: NSColor,
         switchDotColor: NSColor,
-        liveDot: NSColor?
+        terminusCap: NSColor?
     ) {
-        // Note: NSImage drawing origin is bottom-left, but our geometry is
-        // conceptually top-left. Flip y via (18 - y) for each point.
+        let railStroke: CGFloat = 2.6
+        let diagonalStroke: CGFloat = 2.2
 
-        // Stroke widths scaled for 18pt canvas.
-        let railWidth: CGFloat = 1.6
-        let sidingWidth: CGFloat = 1.6
-
-        // Main rails — two parallel horizontal lines
-        mainRailsColor.setStroke()
-        for y: CGFloat in [6.5, 10.5] {
-            let path = NSBezierPath()
-            path.move(to: NSPoint(x: 2, y: y))
-            path.line(to: NSPoint(x: 16, y: y))
-            path.lineWidth = railWidth
-            path.lineCapStyle = .round
-            path.stroke()
+        func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: x, y: 18 - y)
         }
 
-        // Siding — two parallel curves diverging upward-right
-        sidingColor.setStroke()
-        let siding1 = NSBezierPath()
-        siding1.move(to: NSPoint(x: 8, y: 10.5))      // from top rail at switch
-        siding1.curve(
-            to: NSPoint(x: 16, y: 16),
-            controlPoint1: NSPoint(x: 11, y: 13),
-            controlPoint2: NSPoint(x: 14, y: 15.5)
-        )
-        siding1.lineWidth = sidingWidth
-        siding1.lineCapStyle = .round
-        siding1.stroke()
+        // 1. Top rail (main line, horizontal)
+        topRailColor.setStroke()
+        let topRail = NSBezierPath()
+        topRail.move(to: pt(2, 6))
+        topRail.line(to: pt(16, 6))
+        topRail.lineWidth = railStroke
+        topRail.lineCapStyle = .round
+        topRail.stroke()
 
-        let siding2 = NSBezierPath()
-        siding2.move(to: NSPoint(x: 9.5, y: 6.5))     // from bottom rail at switch
-        siding2.curve(
-            to: NSPoint(x: 16.5, y: 13),
-            controlPoint1: NSPoint(x: 12.5, y: 9),
-            controlPoint2: NSPoint(x: 15, y: 12)
-        )
-        siding2.lineWidth = sidingWidth
-        siding2.lineCapStyle = .round
-        siding2.stroke()
+        // 2. Bottom rail (diverted line, horizontal)
+        bottomRailColor.setStroke()
+        let bottomRail = NSBezierPath()
+        bottomRail.move(to: pt(2, 12))
+        bottomRail.line(to: pt(16, 12))
+        bottomRail.lineWidth = railStroke
+        bottomRail.lineCapStyle = .round
+        bottomRail.stroke()
 
-        // Switch point marker (amber dot at the junction)
+        // 3. Switch diagonal — connects top rail to bottom rail (the physical
+        //    switch that lets traffic transfer). Slightly thinner than rails
+        //    so it reads as a connector, not a third track.
+        diagonalColor.setStroke()
+        let diagonal = NSBezierPath()
+        diagonal.move(to: pt(8, 6))
+        diagonal.line(to: pt(11, 12))
+        diagonal.lineWidth = diagonalStroke
+        diagonal.lineCapStyle = .round
+        diagonal.stroke()
+
+        // 4. Switch-point dot at the diagonal's midpoint
         switchDotColor.setFill()
-        let switchRect = NSRect(x: 7.5, y: 7.7, width: 2.6, height: 2.6)
+        let dotR: CGFloat = 2.0
+        let switchRect = NSRect(
+            x: 9.5 - dotR, y: (18 - 9) - dotR,
+            width: dotR * 2, height: dotR * 2
+        )
         NSBezierPath(ovalIn: switchRect).fill()
 
-        // Live dot — reserved for routing state
-        if let live = liveDot {
-            live.setFill()
-            let liveRect = NSRect(x: 14.6, y: 14.6, width: 3.0, height: 3.0)
-            NSBezierPath(ovalIn: liveRect).fill()
+        // 5. Active-state terminus cap at the right end of the bottom rail.
+        if let cap = terminusCap {
+            cap.setFill()
+            let capR: CGFloat = 1.8
+            let capRect = NSRect(
+                x: 16 - capR, y: (18 - 12) - capR,
+                width: capR * 2, height: capR * 2
+            )
+            NSBezierPath(ovalIn: capRect).fill()
         }
     }
 }

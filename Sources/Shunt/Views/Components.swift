@@ -1,21 +1,46 @@
 import SwiftUI
 
 // Reusable SwiftUI components wired to the Shunt design system.
+// Color tokens come from the active theme via @Environment(\.shuntTheme).
 
-/// Small uppercase monospace section header, Signal Amber tint.
+/// Small uppercase monospace section header, theme-accent tint.
 /// Example: "PROXY" / "INTERFACE BINDING" / "ABOUT THIS VERSION".
+///
+/// Optionally takes a SF Symbol icon (rendered at 10pt secondary) and a
+/// `.help()` tooltip — pattern mirrors `RulesTab.SectionLabel`. All section
+/// headers across the app should pass both whenever there's a meaningful
+/// icon and a useful explanation, for visual + behavioral consistency.
 struct SectionHeader: View {
     let label: String
+    let icon: String?
+    let tooltip: String?
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
+
+    init(label: String, icon: String? = nil, tooltip: String? = nil) {
+        self.label = label
+        self.icon = icon
+        self.tooltip = tooltip
+    }
 
     var body: some View {
-        Text(label.uppercased())
-            .font(.shuntMonoLabel)
-            .kerning(1.0)
-            .foregroundStyle(Color.signalAmber)
+        HStack(spacing: 5) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(theme.accent(for: scheme).opacity(0.8))
+            }
+            Text(label.uppercased())
+                .font(.shuntMonoLabel)
+                .kerning(1.0)
+                .foregroundStyle(theme.accent(for: scheme))
+        }
+        .contentShape(Rectangle())
+        .help(tooltip ?? "")
     }
 }
 
-/// Pill indicator of routing state. Green when active (with a soft glow),
+/// Pill indicator of routing state. Theme's status-active color when live,
 /// neutral gray when idle.
 struct StatusPill: View {
     enum Kind {
@@ -25,6 +50,8 @@ struct StatusPill: View {
     }
 
     let kind: Kind
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(spacing: 6) {
@@ -41,29 +68,31 @@ struct StatusPill: View {
         .background(background, in: Capsule())
     }
 
+    private var activeColor: Color { theme.statusActive(for: scheme) }
+
     private var dotColor: Color {
         switch kind {
-        case .active: return .pcbGreen
+        case .active: return activeColor
         case .idle: return .secondary
         case .custom(_, let c): return c
         }
     }
     private var glowColor: Color {
         switch kind {
-        case .active: return Color.pcbGreen.opacity(0.5)
+        case .active: return activeColor.opacity(0.5)
         default: return .clear
         }
     }
     private var textColor: Color {
         switch kind {
-        case .active: return .pcbGreen
+        case .active: return activeColor
         case .idle: return .secondary
         case .custom(_, let c): return c
         }
     }
     private var background: Color {
         switch kind {
-        case .active: return .pcbGreen100.opacity(0.5)
+        case .active: return activeColor.opacity(0.22)
         case .idle: return Color.secondary.opacity(0.12)
         case .custom(_, let c): return c.opacity(0.12)
         }
@@ -77,11 +106,14 @@ struct StatusPill: View {
     }
 }
 
-/// Hero status card shown on the top of the General tab.
+/// Hero status card shown on the top of the General tab. Background is a
+/// subtle theme-accent tint fading diagonally.
 struct StatusCard: View {
     let title: String
     let detail: String
     let active: Bool
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -103,8 +135,8 @@ struct StatusCard: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color.signalAmber.opacity(0.09),
-                    Color.signalAmber.opacity(0.0)
+                    theme.accent(for: scheme).opacity(0.09),
+                    theme.accent(for: scheme).opacity(0.0)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -113,12 +145,12 @@ struct StatusCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.shuntSeparator, lineWidth: 1)
+                .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
         )
     }
 }
 
-/// Standard two-column form row: 160pt label + flexible value.
+/// Standard two-column form row: 140pt label + flexible value.
 struct FormRow<Content: View>: View {
     let label: String
     let content: Content

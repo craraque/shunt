@@ -7,6 +7,8 @@ struct UpstreamTab: View {
     @State private var portText: String = ""
     @State private var bindInterface: String = ""
     @State private var availableInterfaces: [String] = []
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         ScrollView {
@@ -15,7 +17,11 @@ struct UpstreamTab: View {
                     .font(.shuntTitle1)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "SOCKS5 endpoint")
+                    SectionHeader(
+                        label: "SOCKS5 endpoint",
+                        icon: "arrow.up.right",
+                        tooltip: "Where claimed traffic is forwarded — typically a SOCKS5 proxy running inside a VM with the corporate VPN."
+                    )
                     VStack(spacing: 0) {
                         FormRow("Host") {
                             TextField("10.211.55.5", text: $host)
@@ -35,7 +41,11 @@ struct UpstreamTab: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "Interface binding")
+                    SectionHeader(
+                        label: "Interface binding",
+                        icon: "cable.connector",
+                        tooltip: "Force the extension to dial the upstream out a specific NIC. Needed only when the upstream lives on a virtual bridge (e.g. bridge100 for Parallels) that isn't reachable via the default route."
+                    )
                     VStack(spacing: 0) {
                         FormRow("Bind to") {
                             Picker("", selection: $bindInterface) {
@@ -62,7 +72,7 @@ struct UpstreamTab: View {
                 HStack(spacing: 8) {
                     Button("Apply") { apply() }
                         .buttonStyle(.borderedProminent)
-                        .tint(.signalAmber)
+                        .tint(theme.accent(for: scheme))
                         .keyboardShortcut(.defaultAction)
 
                     Button("Test Connection") {
@@ -76,7 +86,7 @@ struct UpstreamTab: View {
                     HStack(spacing: 8) {
                         if result.contains("OK") {
                             Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.pcbGreen)
+                                .foregroundStyle(theme.statusActive(for: scheme))
                         } else if result.hasPrefix("Testing") {
                             ProgressView().controlSize(.small)
                         } else {
@@ -85,7 +95,7 @@ struct UpstreamTab: View {
                         }
                         Text(result)
                             .font(.shuntMonoData)
-                            .foregroundStyle(result.contains("OK") ? Color.pcbGreen : .secondary)
+                            .foregroundStyle(result.contains("OK") ? theme.statusActive(for: scheme) : .secondary)
                     }
                     .padding(.top, 2)
                 }

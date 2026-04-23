@@ -179,6 +179,55 @@ Canonical geometry (render at all required sizes per Apple HIG):
 - Primary text: tab's current status sentence ("Routing 3 apps via Zscaler VM").
 - Accessory: active/idle status pill on the right.
 
+## Themes (v0.2.1)
+
+The design system ships four user-selectable themes. Every theme preserves
+the Precision Utility identity — typography, spacing, iconography, and
+layout are theme-invariant. Only the accent, status-active, window-bg, and
+row-hover tokens change.
+
+| Theme | Accent (light / dark) | Status active (light / dark) | POV |
+|---|---|---|---|
+| **Filament** (default) | `#C2410C` / `#FB923C` | `#15803D` / `#4ADE80` | Heated tungsten on graphite. Warm generalist. |
+| **Iodine** | `#2563EB` / `#7CA8FF` | `#059669` / `#34D399` | Lab glass at 6500K. Cool-terminal developer. |
+| **Blueprint** | `#1E3A8A` / `#A5B8E3` | `#166534` / `#7DD3A0` | Archival ink on cotton stock. Editorial minimalist. |
+| **Chassis** | `#0A0A0A` / `#F5F5F4` | `#0891B2` / `#22D3EE` | Anodized aluminum with one indicator LED. OLED / rack purist. |
+
+**Rules:**
+- Theme selection lives in `ShuntSettings.themeID`. Export/import preserves it.
+- Legacy v0.2.0 ids (`signal-amber`, `graphite-cyan`, `paper-blueprint`, `carbon-mono`) are auto-mapped to their v0.2.1 successors in `ShuntTheme.byID(_:)` so existing settings don't reset to default.
+- Status-active is NEVER equal to the accent — routing-live must read as a distinct signal. The four themes use emerald / mint / moss / cyan respectively to stay unambiguous against their accents.
+- The Chassis theme uses the **dark accent variant** (`#F5F5F4`) at all times for menubar legibility — the light `#0A0A0A` is unreadable on a macOS dark menubar.
+- Views read tokens via `@Environment(\.shuntTheme)`. Never reach for `Color.signalAmber` or `Color.pcbGreen` — those are legacy static tokens kept only for transitional compat and will be removed in a later cleanup.
+
+## Menu bar mark — "The Turnout" (v0.2.1)
+
+The menubar icon is a **Y-shaped single-rail switch**: one trunk rail enters
+from the left, a switch-point dot marks the junction, one branch continues
+straight (dimmed when routing), and one diverges up and to the right (the
+"shunt"). A terminus cap on the diverging branch appears only in the routing
+state.
+
+This is a deliberate step away from the v0.2 menubar icon (a miniature of
+the full railway illustration). A full multi-rail schematic at 18pt reads as
+noise next to Apple's SF Symbol neighbors; a single Y-glyph with 2.2pt
+strokes has a real silhouette. The 1024pt `.icns` app icon keeps the
+full-detail railway illustration — the two are a logo-lockup pair (full
+scene vs. extracted switch-point glyph), not identical at every size.
+
+**Geometry (18×18 top-left origin):**
+- Trunk rail: line from `(2, 13)` to `(8.5, 13)`. Stroke 2.2pt, round caps.
+- Straight branch: line from `(8.5, 13)` to `(16, 13)`. Same stroke.
+- Diverging branch: cubic Bézier, `moveTo(8.5, 13) → curveTo(11.5, 13) cp1=(10.2, 13) cp2=(10.8, 12.5)` then `curveTo(16, 4.5) cp1=(13.5, 10) cp2=(15, 7)`.
+- Switch-point dot: filled circle, center `(8.5, 13)`, radius 1.6pt.
+- Active-state terminus cap: filled circle, center `(16, 4.5)`, radius 1.5pt. Drawn only when routing.
+
+**State coloring:**
+- **Idle:** all four elements rendered in `labelColor`; `isTemplate = true`. macOS tints to match menubar.
+- **Routing:** trunk + straight branch drawn at `labelColor × 0.45` so they recede. Diverging branch + switch dot adopt `theme.accent`. Terminus cap adopts `theme.statusActive`. `isTemplate = false`.
+
+**Scale behavior:** geometry is identical at 16/22/24pt — nothing drops, because there's nothing left to drop. Stroke scales linearly with canvas.
+
 ## Decisions Log
 
 | Date | Decision | Rationale |
@@ -188,3 +237,7 @@ Canonical geometry (render at all required sizes per Apple HIG):
 | 2026-04-21 | No custom animations in v0.1 | Focus on correctness first. System transitions are fine. Add motion in v0.2 if UX feedback demands it. |
 | 2026-04-21 | Zero gradients in UI (icon excepted) | Precision aesthetic is undermined by glossy surfaces. Flat colors enforce discipline. |
 | 2026-04-21 | Blueprint grid motif only on About tab | Signature decorative moment. Applying everywhere would be kitsch. About is the one "brand expression" surface. |
+| 2026-04-22 | Sidebar layout finally implemented (820×520) | `NavigationSplitView` replaces the v0.1 `TabView`. First implementation of the layout the design system always specified. Six sidebar items (General, Rules, Upstream, Themes, Advanced, About). |
+| 2026-04-22 | Apps tab → Rules tab | Data model evolved from flat `managedApps` to compound `rules` (apps ∧ hosts → action). The Rules tab reflects the richer model; each rule row collapses/expands, with a multi-select + merge action for fusing per-app rules into compound ones. |
+| 2026-04-22 | Themes added — 3 alternatives to Signal Amber | `/design-consultation` brief asked for themes that span orthogonal user spaces: cool-instrument (Graphite Cyan), draftsman-minimalist (Paper Blueprint), max-contrast/OLED (Carbon Mono). Each has a named user and a POV — no generic color-swap trio. |
+| 2026-04-22 | Status-active is a theme token, not a constant | Routing-live color was PCB Green in v0.1. Carbon Mono needs accent-orange to carry signal on an otherwise monochrome canvas; other themes keep it green. Token name: `statusActive`. |

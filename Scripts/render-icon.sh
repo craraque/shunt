@@ -1,7 +1,8 @@
 #!/bin/bash
-# Render Resources/Icon.svg and Icon-compact.svg into a macOS .icns with all
-# required slot sizes. Outputs build/AppIcon.icns which build.sh copies into the
-# app bundle.
+# Render Resources/Icon*.svg into macOS .icns files.
+#   Icon.svg + Icon-compact.svg  → build/AppIcon.icns        (main Shunt.app)
+#   Icon-test.svg + Icon-test-compact.svg → build/AppIconTest.icns (ShuntTest.app)
+# build.sh copies each .icns into the corresponding bundle's Resources/.
 #
 # Uses rsvg-convert (brew install librsvg) for crisp vector → raster output.
 
@@ -9,38 +10,41 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
-ICONSET="$BUILD_DIR/AppIcon.iconset"
-
-SVG_FULL="$PROJECT_DIR/Resources/Icon.svg"
-SVG_COMPACT="$PROJECT_DIR/Resources/Icon-compact.svg"
 
 command -v rsvg-convert >/dev/null || { echo "ERROR: rsvg-convert missing. Run: brew install librsvg"; exit 1; }
-[[ -f "$SVG_FULL" ]] || { echo "ERROR: $SVG_FULL not found"; exit 1; }
-[[ -f "$SVG_COMPACT" ]] || { echo "ERROR: $SVG_COMPACT not found"; exit 1; }
 
-rm -rf "$ICONSET"
-mkdir -p "$ICONSET"
+# render_icon <full_svg> <compact_svg> <output_icns_name>
+render_icon() {
+    local svg_full="$1"
+    local svg_compact="$2"
+    local icns_name="$3"
+    local iconset="$BUILD_DIR/${icns_name%.icns}.iconset"
 
-# render(svg, pixel_size, out_file)
-render() {
-    rsvg-convert -w "$2" -h "$2" "$1" -o "$ICONSET/$3"
+    [[ -f "$svg_full" ]] || { echo "ERROR: $svg_full not found"; exit 1; }
+    [[ -f "$svg_compact" ]] || { echo "ERROR: $svg_compact not found"; exit 1; }
+
+    rm -rf "$iconset"
+    mkdir -p "$iconset"
+
+    # Actual pixel sizes required in a macOS .icns:
+    #   16, 32, 64, 128, 256, 512, 1024
+    # Use compact SVG for ≤64, full SVG for ≥128.
+    rsvg-convert -w   16 -h   16 "$svg_compact" -o "$iconset/icon_16x16.png"
+    rsvg-convert -w   32 -h   32 "$svg_compact" -o "$iconset/icon_16x16@2x.png"
+    rsvg-convert -w   32 -h   32 "$svg_compact" -o "$iconset/icon_32x32.png"
+    rsvg-convert -w   64 -h   64 "$svg_compact" -o "$iconset/icon_32x32@2x.png"
+    rsvg-convert -w  128 -h  128 "$svg_full"    -o "$iconset/icon_128x128.png"
+    rsvg-convert -w  256 -h  256 "$svg_full"    -o "$iconset/icon_128x128@2x.png"
+    rsvg-convert -w  256 -h  256 "$svg_full"    -o "$iconset/icon_256x256.png"
+    rsvg-convert -w  512 -h  512 "$svg_full"    -o "$iconset/icon_256x256@2x.png"
+    rsvg-convert -w  512 -h  512 "$svg_full"    -o "$iconset/icon_512x512.png"
+    rsvg-convert -w 1024 -h 1024 "$svg_full"    -o "$iconset/icon_512x512@2x.png"
+
+    iconutil -c icns "$iconset" -o "$BUILD_DIR/$icns_name"
+    rm -rf "$iconset"
+
+    echo "✓ $BUILD_DIR/$icns_name"
 }
 
-# Actual pixel sizes required in a macOS .icns:
-#   16, 32, 64, 128, 256, 512, 1024
-# Use compact SVG for ≤64, full SVG for ≥128.
-render "$SVG_COMPACT"   16 icon_16x16.png
-render "$SVG_COMPACT"   32 icon_16x16@2x.png
-render "$SVG_COMPACT"   32 icon_32x32.png
-render "$SVG_COMPACT"   64 icon_32x32@2x.png
-render "$SVG_FULL"     128 icon_128x128.png
-render "$SVG_FULL"     256 icon_128x128@2x.png
-render "$SVG_FULL"     256 icon_256x256.png
-render "$SVG_FULL"     512 icon_256x256@2x.png
-render "$SVG_FULL"     512 icon_512x512.png
-render "$SVG_FULL"    1024 icon_512x512@2x.png
-
-iconutil -c icns "$ICONSET" -o "$BUILD_DIR/AppIcon.icns"
-rm -rf "$ICONSET"
-
-echo "✓ $BUILD_DIR/AppIcon.icns"
+render_icon "$PROJECT_DIR/Resources/Icon.svg"       "$PROJECT_DIR/Resources/Icon-compact.svg"       "AppIcon.icns"
+render_icon "$PROJECT_DIR/Resources/Icon-test.svg"  "$PROJECT_DIR/Resources/Icon-test-compact.svg"  "AppIconTest.icns"

@@ -139,6 +139,70 @@ identifier "bundle.id" and anchor apple generic and certificate 1[field.1.2.840.
 
 **Rule for Claude.** When iterating on a system extension, add a `--deactivate` flag to the main app that submits an OSSystemExtensionRequest.deactivationRequest. Use it at the end of every test cycle to leave a clean state. Also: the VPN config (NEAppProxyProviderManager preferences) persists independently of the extension — add a `--remove-config` flag too. Users shouldn't have to reboot or dig through System Settings between dev iterations.
 
+## 2026-04-22 — `ForEach($array)` crashes with Array._checkSubscript when the array mutates during a view update
+
+**What went wrong.** Shunt's Rules tab used `ForEach($rule.apps) { $app in RuleAppRow(app: $app, onCommit: { onEnrichApp(app.id) }, ...) }`. User clicked a TextField inside RuleAppRow, committed → `onCommit` called `model.enrichAppInRule` → the model mutated `settings.rules[i].apps[j]` → @Published fired → SwiftUI re-ran RuleCard.body2 during a layout pass → the still-alive `ForEach($rule.apps)` closure tried to read `app.id` via the per-element binding → that binding subscripts `rule.apps[index]` internally by **index** → index briefly invalid → `Array._checkSubscript` → `assertionFailure` → `EXC_BREAKPOINT` → crash.
+
+Stack top:
+```
+Array._checkSubscript(_:wasNativeTypeChecked:)
+Array.subscript.read
+Binding<A>.subscript.getter (closure)
+LocationBox.get()
+Binding.readValue()
+getter of `app` in closure in RuleCard.body2
+```
+
+**Root cause.** `ForEach($bindingArray) { $element in ... }` creates per-element bindings that internally subscript the array by index. The index captures at the time of ForEach construction, but is read (not re-resolved) at every body re-evaluation. If the array mutates between view graph construction and any subsequent binding read (typical during `save()` triggered by a TextField commit), the index is stale.
+
+**Correction.** Iterate by value and construct ID-based bindings explicitly:
+
+```swift
+ForEach(rule.apps) { app in
+    let appID = app.id                              // snapshot id
+    RuleAppRow(
+        app: appBinding(id: appID, fallback: app),  // ID-based Binding
+        onCommit: { onEnrichApp(appID) },           // closure uses snapshot, not app
+        onRemove: { onRemoveApp(appID) }
+    )
+}
+
+private func appBinding(id: UUID, fallback: ManagedApp) -> Binding<ManagedApp> {
+    Binding(
+        get: { rule.apps.first(where: { $0.id == id }) ?? fallback },
+        set: { newValue in
+            if let idx = rule.apps.firstIndex(where: { $0.id == id }) {
+                rule.apps[idx] = newValue
+            }
+        }
+    )
+}
+```
+
+The fallback is a stale-but-valid `ManagedApp` value used only in the brief window where the element was removed from the array — prevents the binding.get from trapping. The set path does nothing if the id is no longer present. The closures capture the snapshotted `appID` UUID, not the `app` value whose backing storage may evaporate.
+
+**Rule for Claude.** In any SwiftUI view where a mutable array of Identifiable values is rendered AND individual items can trigger model mutations (TextField commit, Toggle change, onTap that calls save()):
+1. Do NOT use `ForEach($array) { $item in ... }`. That's a crash waiting to happen.
+2. Use `ForEach(array) { item in ... }` (by value, Identifiable) and build a custom `Binding<Item>` keyed by id for any child that needs two-way binding.
+3. Capture the id as a local `let` at the top of the ForEach closure, and pass the id (not the value) into all callback closures.
+4. Provide a `fallback: Item` in the get-side so a transient "not found" doesn't crash — the UI will briefly show stale data, then the enclosing view re-renders with the updated array.
+
+This pattern is resilient to array reorder, removal, and addition during simultaneous view updates.
+
+## 2026-04-22 — NavigationSplitView silently fails to render inside a custom NSWindow (LSUIElement app)
+
+**What went wrong.** Replaced `TabView` with `NavigationSplitView` in `SettingsView.swift` for the v0.2 sidebar layout (per DESIGN.md §Layout). Launched the app → window opened with title "Shunt Settings" and a visible column divider, but **both the sidebar list and detail pane rendered as empty black rectangles**. No crash, no logs, no errors. Process alive. User reported "same symptom as yesterday" — confirming this had been hit before and was the reason v0.1 shipped with `TabView` instead.
+
+**Root cause.** `NavigationSplitView` relies on internal `NavigationStack`-style plumbing that requires a SwiftUI-native window host (`WindowGroup` / `Settings` scene / `MenuBarExtra.window`). Shunt hosts its Settings UI inside a plain `NSWindow` via `NSHostingController(rootView:)` owned by an `NSWindowController` — this is necessary because `LSUIElement=true` breaks the SwiftUI `Settings` scene (window silently fails to come forward). Inside that non-SwiftUI-owned window, `NavigationSplitView` lays out its columns but its children (`List` selection + `detail` closure) silently don't emit views. Confirmed empirically: same code works fine in a SwiftUI `App` scene.
+
+**Correction.** Replace `NavigationSplitView` with a plain `HStack { sidebar; Divider(); detail }`. Build the sidebar as a custom `VStack` of `Button`-based row views using `@State` for selection. Wrap the sidebar's background in a minimal `NSViewRepresentable` around `NSVisualEffectView(material: .sidebar)` to preserve the native vibrancy DESIGN.md specifies. All layout constants (200pt sidebar, 14pt icon + 13pt label, 8pt/6pt row padding, amber 15% active fill) match DESIGN.md §Layout exactly — we lose nothing except the `NavigationSplitView` convenience.
+
+**Rule for Claude.** In any LSUIElement menubar app that hosts SwiftUI inside a plain `NSWindow`:
+1. Do NOT reach for `NavigationSplitView` / `NavigationStack` / `.navigationTitle` / `.toolbar` APIs — they assume a SwiftUI-owned window and fail silently.
+2. Default to: plain `HStack` + custom sidebar rows + state-driven detail switch. It's more code but 100% deterministic.
+3. For sidebar vibrancy, use `NSViewRepresentable` wrapping `NSVisualEffectView` with `material: .sidebar`, `blendingMode: .behindWindow`, `state: .active`.
+4. If the window opens but appears empty, do NOT assume a crash — check with `ps aux | grep AppName`. A dead process is a crash; a live process with an empty window is a SwiftUI hosting issue.
+
 ## 2026-04-21 — codesign hangs silently when the private-key ACL requires user approval
 
 **What went wrong.** First `codesign --sign "Developer ID ..."` invocation hung with no output. Multiple invocations stacked up; TaskStop killed them but the build looked broken.

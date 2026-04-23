@@ -7,6 +7,8 @@ struct GeneralTab: View {
     @State private var proxyEnabled: Bool = false
     @State private var statusTimer: Timer?
     @State private var busy = false
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
 
     private let services = AppServices.shared
 
@@ -23,13 +25,17 @@ struct GeneralTab: View {
                 )
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "Proxy")
+                    SectionHeader(
+                        label: "Proxy",
+                        icon: "bolt.horizontal.fill",
+                        tooltip: "Toggle the per-app proxy on or off. Disable to send all traffic via the host network temporarily."
+                    )
                     VStack(spacing: 0) {
                         FormRow("Enabled") {
                             Toggle("", isOn: $proxyEnabled)
                                 .toggleStyle(.switch)
                                 .labelsHidden()
-                                .tint(.signalAmber)
+                                .tint(theme.accent(for: scheme))
                                 .disabled(busy)
                                 .onChange(of: proxyEnabled) { _, newValue in
                                     handleToggle(newValue)
@@ -43,7 +49,7 @@ struct GeneralTab: View {
                         FormRow("State") {
                             MonoText(
                                 statusWord,
-                                color: isRouting ? .pcbGreen : .secondary
+                                color: isRouting ? theme.statusActive(for: scheme) : .secondary
                             )
                         }
                     }
@@ -51,12 +57,16 @@ struct GeneralTab: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "System extension")
+                    SectionHeader(
+                        label: "System extension",
+                        icon: "puzzlepiece.extension",
+                        tooltip: "The kernel-level component that intercepts flows and routes claimed apps through the upstream. Activation prompts macOS for permission once."
+                    )
                     VStack(spacing: 0) {
                         FormRow("Status") {
                             MonoText(
                                 extensionInstalled ? "activated" : "not installed",
-                                color: extensionInstalled ? .pcbGreen : .secondary
+                                color: extensionInstalled ? theme.statusActive(for: scheme) : .secondary
                             )
                         }
                         Divider()
@@ -75,7 +85,11 @@ struct GeneralTab: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(label: "About this version")
+                    SectionHeader(
+                        label: "About this version",
+                        icon: "info.circle",
+                        tooltip: "App and build numbers. Useful for filing issues."
+                    )
                     VStack(spacing: 0) {
                         FormRow("Version") {
                             MonoText("\(Self.appVersion) · build \(Self.appBuild)", color: .secondary)

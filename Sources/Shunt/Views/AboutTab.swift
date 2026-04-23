@@ -1,12 +1,20 @@
 import SwiftUI
 
 struct AboutTab: View {
+    @Environment(\.shuntTheme) private var theme
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
         ZStack {
             BlueprintGrid()
             VStack(spacing: 14) {
                 Spacer().frame(height: 16)
-                AppIconMark(size: 96)
+                TurnoutMark(
+                    size: 112,
+                    accent: theme.accent(for: scheme),
+                    statusActive: theme.statusActive(for: scheme),
+                    routing: true
+                )
                 Text("Shunt")
                     .font(.shuntDisplay)
                 Text("Version \(appVersion) · build \(appBuild)")
@@ -43,7 +51,7 @@ private struct BlueprintGrid: View {
     var body: some View {
         Canvas { context, size in
             let spacing: CGFloat = 24
-            let stroke = GraphicsContext.Shading.color(.shuntSeparator.opacity(0.6))
+            let stroke = GraphicsContext.Shading.color(Color(nsColor: .separatorColor).opacity(0.6))
             var x: CGFloat = 0
             while x <= size.width {
                 var p = Path()
@@ -64,68 +72,103 @@ private struct BlueprintGrid: View {
     }
 }
 
-/// Renders the railway shunt icon as a SwiftUI Canvas drawing. Size scales the
-/// 160-unit viewBox down to whatever pt size the caller wants. Used in the
-/// About tab and anywhere else we want to show the brand mark in-app (without
-/// loading the .icns file).
-struct AppIconMark: View {
+/// Renders the Turnout mark at any size. Uses the 18-unit canvas geometry
+/// from MenubarIcons but scaled up, with theme colors. The routing parameter
+/// toggles between the idle and active rendering so the About tab can show
+/// the live state.
+struct TurnoutMark: View {
     let size: CGFloat
+    let accent: Color
+    let statusActive: Color
+    let routing: Bool
+
+    init(size: CGFloat,
+         accent: Color = Color(hex: 0xC2410C),
+         statusActive: Color = Color(hex: 0x15803D),
+         routing: Bool = true) {
+        self.size = size
+        self.accent = accent
+        self.statusActive = statusActive
+        self.routing = routing
+    }
 
     var body: some View {
-        Canvas { ctx, canvasSize in
-            // Scale 160-unit viewBox to canvas
-            let s = canvasSize.width / 160.0
+        Canvas { [accent, statusActive, routing] ctx, canvasSize in
+            // Scale 18-unit canvas up to target size
+            let s = canvasSize.width / 18.0
             ctx.scaleBy(x: s, y: s)
 
-            // Background — rounded square with vertical gradient
-            let bgRect = CGRect(x: 0, y: 0, width: 160, height: 160)
-            let bgPath = Path(roundedRect: bgRect, cornerRadius: 36)
-            ctx.fill(
-                bgPath,
-                with: .linearGradient(
-                    Gradient(colors: [Color(red: 0.169, green: 0.165, blue: 0.157),
-                                      Color(red: 0.102, green: 0.102, blue: 0.098)]),
-                    startPoint: CGPoint(x: 80, y: 0),
-                    endPoint: CGPoint(x: 80, y: 160)
+            // Sub-linear stroke scaling so 100pt doesn't look clubbed.
+            let railStroke: CGFloat = {
+                if canvasSize.width <= 24 { return 2.6 }
+                if canvasSize.width <= 64 { return 2.4 }
+                return 2.2
+            }()
+            let diagStroke: CGFloat = railStroke - 0.4
+
+            let recede = Color.primary.opacity(0.35)
+
+            // Top rail (main line) — recedes in active state
+            var topRail = Path()
+            topRail.move(to: CGPoint(x: 2, y: 6))
+            topRail.addLine(to: CGPoint(x: 16, y: 6))
+            ctx.stroke(topRail,
+                       with: .color(routing ? recede : .primary),
+                       style: StrokeStyle(lineWidth: railStroke, lineCap: .round))
+
+            // Bottom rail (diverted line) — active in routing state
+            var bottomRail = Path()
+            bottomRail.move(to: CGPoint(x: 2, y: 12))
+            bottomRail.addLine(to: CGPoint(x: 16, y: 12))
+            ctx.stroke(bottomRail,
+                       with: .color(routing ? accent : .primary),
+                       style: StrokeStyle(lineWidth: railStroke, lineCap: .round))
+
+            // Switch diagonal connecting the two rails
+            var diagonal = Path()
+            diagonal.move(to: CGPoint(x: 8, y: 6))
+            diagonal.addLine(to: CGPoint(x: 11, y: 12))
+            ctx.stroke(diagonal,
+                       with: .color(routing ? accent : .primary),
+                       style: StrokeStyle(lineWidth: diagStroke, lineCap: .round))
+
+            // Switch-point dot at the diagonal's midpoint
+            let dotR: CGFloat = 2.0
+            let switchRect = CGRect(
+                x: 9.5 - dotR, y: 9 - dotR,
+                width: dotR * 2, height: dotR * 2
+            )
+            ctx.fill(Path(ellipseIn: switchRect),
+                     with: .color(routing ? accent : .primary))
+
+            // Active-state terminus cap at the right end of the bottom rail
+            if routing {
+                let capR: CGFloat = 1.8
+                let capRect = CGRect(
+                    x: 16 - capR, y: 12 - capR,
+                    width: capR * 2, height: capR * 2
                 )
-            )
-
-            // Cross ties
-            let tieColor = Color(red: 0.894, green: 0.878, blue: 0.847).opacity(0.4)
-            for x in [24.0, 40, 56, 100, 116, 132] {
-                let r = CGRect(x: x, y: 94, width: 3, height: 24)
-                ctx.fill(Path(roundedRect: r, cornerRadius: 1), with: .color(tieColor))
+                ctx.fill(Path(ellipseIn: capRect),
+                         with: .color(statusActive))
             }
-
-            // Main rails
-            let rail = Color(red: 0.949, green: 0.945, blue: 0.933)
-            for y in [99.0, 113] {
-                var p = Path()
-                p.move(to: CGPoint(x: 22, y: y))
-                p.addLine(to: CGPoint(x: 138, y: y))
-                ctx.stroke(p, with: .color(rail),
-                           style: StrokeStyle(lineWidth: 3, lineCap: .round))
-            }
-
-            // Switch point
-            ctx.fill(
-                Path(ellipseIn: CGRect(x: 74.5, y: 102.5, width: 7, height: 7)),
-                with: .color(.signalAmber)
-            )
-
-            // Siding curves (Amber)
-            let sidingStyle = StrokeStyle(lineWidth: 3, lineCap: .round)
-            var siding1 = Path()
-            siding1.move(to: CGPoint(x: 72, y: 99))
-            siding1.addQuadCurve(to: CGPoint(x: 126, y: 52), control: CGPoint(x: 92, y: 72))
-            ctx.stroke(siding1, with: .color(.signalAmber), style: sidingStyle)
-
-            var siding2 = Path()
-            siding2.move(to: CGPoint(x: 84, y: 113))
-            siding2.addQuadCurve(to: CGPoint(x: 138, y: 66), control: CGPoint(x: 104, y: 86))
-            ctx.stroke(siding2, with: .color(.signalAmber), style: sidingStyle)
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+}
+
+/// Legacy — kept as an alias so any external reference still compiles. The
+/// new name is `TurnoutMark`. This wraps it with the default accent so the
+/// v0.2.0 signature (no theme colors) keeps working.
+struct AppIconMark: View {
+    let size: CGFloat
+    let accent: Color
+
+    init(size: CGFloat, accent: Color = Color(hex: 0xC2410C)) {
+        self.size = size
+        self.accent = accent
+    }
+
+    var body: some View {
+        TurnoutMark(size: size, accent: accent, routing: true)
     }
 }

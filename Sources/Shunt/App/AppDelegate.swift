@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import ShuntCore
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusTimer: Timer?
@@ -18,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var extensionManager: SystemExtensionManager { AppServices.shared.extensionManager }
     private var proxyManager: ProxyManager { AppServices.shared.proxyManager }
     private var settingsStore: SettingsStore { AppServices.shared.settingsStore }
+
+    private var themeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
@@ -63,6 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         Log.info("Shunt launched")
         refreshStatus()
+
+        // Re-render the menu-bar icon when the user switches themes.
+        themeObserver = NotificationCenter.default.addObserver(
+            forName: .init("ShuntActiveThemeChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.renderStatusIcon()
+        }
         statusTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             self?.refreshStatus()
         }
@@ -116,7 +128,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func renderStatusIcon() {
         guard let button = statusItem.button else { return }
-        button.image = proxyIsRouting ? MenubarIcons.routing() : MenubarIcons.idle()
+        button.image = proxyIsRouting
+            ? MenubarIcons.routing(theme: ActiveTheme.shared.current)
+            : MenubarIcons.idle()
     }
 
     private var proxyIsRouting: Bool {

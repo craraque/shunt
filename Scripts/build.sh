@@ -84,8 +84,10 @@ codesign --force --options runtime --timestamp \
 echo "▸ Assembling + signing ShuntTest.app"
 TEST_APP="$BUILD_DIR/ShuntTest.app"
 mkdir -p "$TEST_APP/Contents/MacOS"
+mkdir -p "$TEST_APP/Contents/Resources"
 cp "$PROJECT_DIR/.build/release/ShuntTest" "$TEST_APP/Contents/MacOS/ShuntTest"
 cp "$PROJECT_DIR/Resources/ShuntTest-Info.plist" "$TEST_APP/Contents/Info.plist"
+cp "$BUILD_DIR/AppIconTest.icns" "$TEST_APP/Contents/Resources/AppIcon.icns"
 codesign --force --options runtime --timestamp \
     --sign "$SIGN_IDENTITY" \
     "$TEST_APP"
