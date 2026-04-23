@@ -1,6 +1,15 @@
 import Foundation
 import Darwin
 
+/// Serialisable slice of engine state persisted across process restarts so
+/// that a fresh Shunt process can reclaim ownership of prereq processes it
+/// spawned in a previous session. Without this, every rebuild/relaunch
+/// demoted our own Tart instance to "pre-existing" on the next Enable.
+private struct OwnershipRecord: Codable {
+    /// `entryID.uuidString → pid`
+    var owned: [String: Int32]
+}
+
 /// Orchestrates the upstream launcher: stages run sequentially, entries within
 /// a stage run in parallel. Each entry probes health first (idempotency); if
 /// already healthy, it's tagged `alreadyRunning` and never spawned. On any
@@ -56,7 +65,60 @@ public actor UpstreamLauncherEngine {
     /// startAll returns (success or failure).
     private var inFlightStartTask: Task<Void, Error>?
 
+    /// App Group container file that survives process restarts. Only
+    /// entries we spawned are written here; `stopAll` clears the file.
+    private static let ownershipFileName = "launcher-ownership.v1.json"
+
     public init() {}
+
+    // MARK: - Cross-process ownership persistence
+
+    private var ownershipFileURL: URL? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.craraque.shunt"
+        ) else { return nil }
+        return container.appendingPathComponent(Self.ownershipFileName)
+    }
+
+    /// Read the last-persisted ownership record. Entries whose PIDs are no
+    /// longer alive are dropped at read time so callers never reclaim a
+    /// ghost process.
+    private func loadPersistedOwnership() -> [UUID: pid_t] {
+        guard let url = ownershipFileURL,
+              let data = try? Data(contentsOf: url),
+              let record = try? JSONDecoder().decode(OwnershipRecord.self, from: data)
+        else { return [:] }
+        var live: [UUID: pid_t] = [:]
+        for (key, pid) in record.owned {
+            guard let uuid = UUID(uuidString: key) else { continue }
+            if kill(pid, 0) == 0 {
+                live[uuid] = pid
+            }
+        }
+        return live
+    }
+
+    /// Snapshot currently-owned runtimes to disk. Called after any mutation
+    /// that adds/removes an owned entry so a crash or force-quit doesn't
+    /// lose ownership.
+    private func persistOwnership() {
+        guard let url = ownershipFileURL else { return }
+        var owned: [String: Int32] = [:]
+        for (id, rt) in runtimes where rt.ownedByUs {
+            guard let pid = rt.pid else { continue }
+            owned[id.uuidString] = pid
+        }
+        let record = OwnershipRecord(owned: owned)
+        guard let data = try? JSONEncoder().encode(record) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    /// Remove the persisted record entirely. Called when stopAll finishes
+    /// tearing down everything we owned.
+    private func clearPersistedOwnership() {
+        guard let url = ownershipFileURL else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
 
     // MARK: - Public API
 
@@ -171,7 +233,12 @@ public actor UpstreamLauncherEngine {
     ) async {
         let target = launcher ?? lastLauncher
         guard let stages = target?.stages, !stages.isEmpty else {
-            // No layout to order by — just fire SIGTERM to anything we own.
+            // No layout to order by — fire SIGTERM to anything we own.
+            // `hadOwned` guards the persistence wipe: on a cold startup
+            // with an empty in-memory runtimes, this branch is taken with
+            // nothing to kill, and wiping the file here would prevent the
+            // upcoming `runEntry` from reclaiming a prior-session PID.
+            let hadOwned = runtimes.values.contains { $0.ownedByUs }
             for (id, rt) in runtimes where rt.ownedByUs {
                 guard let pid = rt.pid else { continue }
                 _ = gracefulTerminate(pid: pid)
@@ -179,6 +246,7 @@ public actor UpstreamLauncherEngine {
             }
             runtimes.removeAll()
             lastLauncher = nil
+            if hadOwned { clearPersistedOwnership() }
             return
         }
 
@@ -208,6 +276,7 @@ public actor UpstreamLauncherEngine {
 
         runtimes.removeAll()
         lastLauncher = nil
+        clearPersistedOwnership()
     }
 
     /// Current snapshot of engine state, keyed by entry ID. For UI consumption.
@@ -243,10 +312,22 @@ public actor UpstreamLauncherEngine {
         //    before any state mutation that would be hard to unwind.
         if Task.isCancelled { throw CancellationError() }
 
-        // 1. Idempotency probe: if already healthy, mark alreadyRunning, do not spawn.
+        // 1. Idempotency probe: if already healthy, decide ownership by
+        //    consulting the persisted record from prior sessions. A PID we
+        //    previously spawned that's still alive → reclaim as ours; any
+        //    other "already healthy" case → genuinely external.
         let initial = await LauncherProbes.run(entry.healthProbe, upstream: upstream)
         if Task.isCancelled { throw CancellationError() }
         if initial.ok {
+            let persisted = loadPersistedOwnership()
+            if let reclaimedPID = persisted[entry.id] {
+                runtimes[entry.id] = Runtime(state: .running, pid: reclaimedPID, ownedByUs: true)
+                persistOwnership()
+                emit(onEvent, stageIdx: stageIndex, entry: entry,
+                     state: .running, ownedByUs: true,
+                     detail: "reclaimed pid=\(reclaimedPID) from prior session; \(initial.detail)")
+                return
+            }
             runtimes[entry.id] = Runtime(state: .running, pid: nil, ownedByUs: false)
             emit(onEvent, stageIdx: stageIndex, entry: entry,
                  state: .running, ownedByUs: false,
@@ -271,6 +352,7 @@ public actor UpstreamLauncherEngine {
         }
 
         runtimes[entry.id] = Runtime(state: .starting, pid: pid, ownedByUs: true)
+        persistOwnership()
         emit(onEvent, stageIdx: stageIndex, entry: entry,
              state: .starting, ownedByUs: true, detail: "spawned pid=\(pid)")
 

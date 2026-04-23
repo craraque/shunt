@@ -3,6 +3,7 @@ import NetworkExtension
 
 struct GeneralTab: View {
     @ObservedObject var model: SettingsViewModel
+    @ObservedObject private var activity = ProxyActivity.shared
     @State private var statusRaw: Int = 0
     /// User's last-expressed intent for the proxy toggle. Decoupled from the
     /// polled tunnel status so the toggle doesn't bounce while the launcher
@@ -63,6 +64,22 @@ struct GeneralTab: View {
                                 statusWord,
                                 color: isRouting ? theme.statusActive(for: scheme) : .secondary
                             )
+                        }
+                        if !activity.entries.isEmpty {
+                            Divider()
+                            FormRow("Prerequisites") {
+                                HStack(spacing: 8) {
+                                    MonoText(
+                                        "\(activity.runningCount)/\(activity.entries.count) ready",
+                                        color: activity.runningCount == activity.entries.count
+                                            ? theme.statusActive(for: scheme)
+                                            : theme.accent(for: scheme)
+                                    )
+                                    if activity.busy {
+                                        ProgressView().controlSize(.small)
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 4)
@@ -171,15 +188,23 @@ struct GeneralTab: View {
             let count = model.settings.managedApps.filter(\.enabled).count
             return "Routing \(count) \(count == 1 ? "app" : "apps")"
         }
+        if activity.busy {
+            if activity.entries.isEmpty { return "Starting…" }
+            return "Starting \(activity.runningCount)/\(activity.entries.count) prereqs…"
+        }
         if isConnecting { return "Connecting…" }
         if extensionInstalled { return "Proxy idle" }
         return "Extension not installed"
     }
 
     private var statusDetail: String {
-        isRouting || isConnecting
-            ? "via \(upstreamSummary)"
-            : "no traffic is being routed"
+        if isRouting || isConnecting {
+            return "via \(upstreamSummary)"
+        }
+        if activity.busy {
+            return "bringing up prerequisites"
+        }
+        return "no traffic is being routed"
     }
 
     private var statusWord: String {

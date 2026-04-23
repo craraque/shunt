@@ -6,10 +6,11 @@ import ShuntCore
 /// launcher-CRUD methods on `SettingsViewModel`. Editing a single entry opens
 /// a modal sheet (`LauncherEntryEditor`).
 ///
-/// Status dots are static for the initial cut — live updates arrive when the
-/// engine's event stream is wired into the VM in a follow-up commit.
+/// Live state pills come from `ProxyActivity` — the engine pushes an event
+/// per entry transition, which becomes the pill label/colour here.
 struct UpstreamLauncherSection: View {
     @ObservedObject var model: SettingsViewModel
+    @ObservedObject private var activity = ProxyActivity.shared
     @Environment(\.shuntTheme) private var theme
     @Environment(\.colorScheme) private var scheme
 
@@ -23,11 +24,17 @@ struct UpstreamLauncherSection: View {
                 tooltip: "Commands Shunt runs before enabling the tunnel (and stops after disabling). Entries within a stage start in parallel; stages run one after another. A probe that already passes means the entry is already running — Shunt leaves it alone and will not stop it on Disable."
             )
 
-            Text("Entries in the same stage start in parallel; stages run sequentially. Each entry's health probe decides when it's \"ready\".")
-                .font(.shuntCaption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 4)
+            HStack(spacing: 10) {
+                Text("Entries in the same stage start in parallel; stages run sequentially. Each entry's health probe decides when it's \"ready\".")
+                    .font(.shuntCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if !activity.entries.isEmpty {
+                    readyBadge
+                }
+            }
+            .padding(.bottom, 4)
 
             if model.settings.launcher.stages.isEmpty {
                 emptyState
@@ -177,7 +184,7 @@ struct UpstreamLauncherSection: View {
             }
             Spacer()
 
-            probeBadge(for: entry.healthProbe)
+            entryStatusPill(for: entry)
 
             Menu {
                 Button("Edit…") {
@@ -221,7 +228,86 @@ struct UpstreamLauncherSection: View {
         }
     }
 
-    // MARK: - Probe badge
+    // MARK: - Ready badge (N/M ready)
+
+    private var readyBadge: some View {
+        let ready = activity.runningCount
+        let total = activity.entries.count
+        let allReady = ready == total
+        let color: Color = allReady
+            ? theme.statusActive(for: scheme)
+            : theme.accent(for: scheme)
+        return HStack(spacing: 6) {
+            if activity.busy {
+                ProgressView().controlSize(.small)
+            } else {
+                Circle().fill(color).frame(width: 6, height: 6)
+            }
+            Text("\(ready)/\(total) ready")
+                .font(.shuntMonoLabel)
+                .kerning(0.6)
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Entry status pill (live, from engine events)
+
+    /// Renders a pill describing the entry's *live* state, falling back to
+    /// the probe-type badge when no engine event has been received for this
+    /// entry yet (fresh state, tunnel disabled).
+    private func entryStatusPill(for entry: UpstreamLauncherEntry) -> some View {
+        let progress = activity.entries[entry.id]
+        return Group {
+            if let progress {
+                stateLabel(progress)
+            } else {
+                probeBadge(for: entry.healthProbe)
+            }
+        }
+    }
+
+    private func stateLabel(_ progress: ProxyActivity.EntryProgress) -> some View {
+        let (label, color) = stateStyle(progress)
+        return HStack(spacing: 4) {
+            Text(label)
+                .font(.shuntMonoLabel)
+                .kerning(0.6)
+                .foregroundStyle(color)
+            if case .running = progress.state, !progress.ownedByUs {
+                // Subtle marker: this running process was already up when
+                // Shunt enabled; on Disable we will not stop it.
+                Image(systemName: "link")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(color.opacity(0.7))
+                    .help("Pre-existing process — Shunt didn't start it and won't stop it on Disable.")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(color.opacity(0.15), in: Capsule())
+    }
+
+    private func stateStyle(_ progress: ProxyActivity.EntryProgress) -> (String, Color) {
+        switch progress.state {
+        case .idle:
+            return ("IDLE", .secondary)
+        case .starting:
+            return ("STARTING", theme.accent(for: scheme))
+        case .running:
+            return ("RUNNING", theme.statusActive(for: scheme))
+        case .failed:
+            return ("FAILED", .red)
+        case .stopping:
+            return ("STOPPING", theme.accent(for: scheme))
+        case .stopped:
+            return ("STOPPED", .secondary)
+        }
+    }
+
+    // MARK: - Probe badge (static fallback)
 
     private func probeBadge(for probe: HealthProbe) -> some View {
         let label: String = {

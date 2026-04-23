@@ -86,6 +86,41 @@ enum MenubarIcons {
         )
     }
 
+    /// "Pending / working" state. Same silhouette as idle, LED in the same
+    /// theme-`statusActive` colour as the routing state — the difference
+    /// between pending and routing is the **pulse**, not the hue. This
+    /// keeps every theme with its signature LED colour (cyan in Chassis,
+    /// green / teal / lime in the others) whether Shunt is working or
+    /// fully routing.
+    ///
+    /// `ledAlpha` lets the caller pulse the LED over time — `AppDelegate`
+    /// drives a sine-wave pulse while `ProxyActivity.shared.busy` so the
+    /// icon reads as "working" rather than just frozen.
+    static func pending(theme: ShuntTheme, ledAlpha: CGFloat = 1.0) -> NSImage {
+        let isDark = NSApp?.effectiveAppearance.bestMatch(
+            from: [.darkAqua, .aqua]
+        ) == .darkAqua
+        let signal = isDark ? theme.statusActiveDark : theme.statusActiveLight
+
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { _ in
+            let rails = resolvedLabelColor()
+            drawTurnout(
+                railColor: rails,
+                diagonalColor: rails,
+                switchDotColor: rails,
+                switchDotHalo: nil,
+                switchDotRadius: 1.7,
+                topRailAlpha: 1.0
+            )
+            drawCornerLED(color: NSColor(signal).withAlphaComponent(ledAlpha))
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = "Shunt — working"
+        return image
+    }
+
     // MARK: - Drawing
 
     /// Pick a rail color that reads against the menubar: near-black in light

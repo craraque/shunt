@@ -24,9 +24,12 @@ final class ProxyManager {
     /// succeeds. An empty launcher is a no-op — behaviour identical to pre-3f
     /// builds.
     func enable() {
-        Task {
+        Task { @MainActor in
+            ProxyActivity.shared.begin()
+            defer { ProxyActivity.shared.end() }
             let settings = settingsStore.load()
             if !settings.launcher.stages.isEmpty {
+                ProxyActivity.shared.seed(from: settings.launcher)
                 do {
                     Log.info("launcher: starting \(settings.launcher.stages.count) stage(s)")
                     try await AppServices.shared.launcherEngine.startAll(
@@ -34,6 +37,9 @@ final class ProxyManager {
                         upstream: settings.upstream,
                         onEvent: { event in
                             Log.info("launcher: stage=\(event.stageIndex + 1) \"\(event.entryName)\" → \(event.state) owned=\(event.ownedByUs)\(event.detail.map { " [\($0)]" } ?? "")")
+                            Task { @MainActor in
+                                ProxyActivity.shared.record(event)
+                            }
                         }
                     )
                     Log.info("launcher: all stages healthy — proceeding to tunnel")
@@ -56,7 +62,7 @@ final class ProxyManager {
                     return
                 }
             }
-            await MainActor.run { self.enableTunnel() }
+            self.enableTunnel()
         }
     }
 
@@ -154,6 +160,13 @@ final class ProxyManager {
     }
 
     func disable() async {
+        await MainActor.run { ProxyActivity.shared.begin() }
+        defer {
+            Task { @MainActor in
+                ProxyActivity.shared.reset()
+                ProxyActivity.shared.end()
+            }
+        }
         do {
             let managers = try await NETransparentProxyManager.loadAllFromPreferences()
             guard let manager = managers.first else {
@@ -181,6 +194,9 @@ final class ProxyManager {
             launcher: settings.launcher,
             onEvent: { event in
                 Log.info("launcher stop: stage=\(event.stageIndex + 1) \"\(event.entryName)\" → \(event.state) owned=\(event.ownedByUs)")
+                Task { @MainActor in
+                    ProxyActivity.shared.record(event)
+                }
             }
         )
     }

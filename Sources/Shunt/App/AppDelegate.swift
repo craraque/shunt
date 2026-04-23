@@ -78,6 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.renderStatusIcon()
         }
+        NotificationCenter.default.addObserver(
+            forName: ProxyActivity.changedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.renderStatusIcon()
+        }
         NSApp.addObserver(
             self,
             forKeyPath: "effectiveAppearance",
@@ -143,14 +150,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func renderStatusIcon() {
         guard let button = statusItem.button else { return }
-        button.image = proxyIsRouting
-            ? MenubarIcons.routing(theme: ActiveTheme.shared.current)
-            : MenubarIcons.idle()
+        let theme = ActiveTheme.shared.current
+        if proxyIsRouting {
+            stopPulse()
+            button.image = MenubarIcons.routing(theme: theme)
+        } else if proxyIsWorking {
+            startPulseIfNeeded()
+            button.image = MenubarIcons.pending(theme: theme, ledAlpha: currentPulseAlpha())
+        } else {
+            stopPulse()
+            button.image = MenubarIcons.idle()
+        }
+    }
+
+    // MARK: - Pending-state pulse
+
+    /// Timer that drives the LED fade while Shunt is in the "working" state.
+    /// Ticks every 80 ms; each tick advances a phase and re-renders the
+    /// menubar icon with a new alpha computed from a sine wave.
+    private var pulseTimer: Timer?
+    private var pulsePhase: CGFloat = 0
+
+    private func startPulseIfNeeded() {
+        guard pulseTimer == nil else { return }
+        pulsePhase = 0
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tickPulse()
+            }
+        }
+    }
+
+    private func stopPulse() {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        pulsePhase = 0
+    }
+
+    private func tickPulse() {
+        // ~1.4 s per full cycle: 2π / (0.08 s × tickScale) — tickScale = 0.36
+        pulsePhase += 0.36
+        renderStatusIcon()
+    }
+
+    /// Map sine wave [-1, 1] → [0.35, 1.0] for a visibly pulsing LED that
+    /// never fully disappears (user can still locate the icon).
+    private func currentPulseAlpha() -> CGFloat {
+        let s = sin(pulsePhase)
+        return 0.675 + s * 0.325
     }
 
     private var proxyIsRouting: Bool {
         // NEVPNStatus: 0=invalid, 1=disconnected, 2=connecting, 3=connected, 4=reasserting, 5=disconnecting
         proxyStatusRaw == 3
+    }
+
+    /// True while Shunt is in a transient state the user should see as
+    /// "working": launcher prereqs starting/stopping, or the NE tunnel
+    /// connecting / reasserting / disconnecting.
+    private var proxyIsWorking: Bool {
+        ProxyActivity.shared.busy
+            || proxyStatusRaw == 2   // connecting
+            || proxyStatusRaw == 4   // reasserting
+            || proxyStatusRaw == 5   // disconnecting
     }
 
     private func refreshStatus() {
