@@ -67,7 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Log.info("Shunt launched")
         refreshStatus()
 
-        // Re-render the menu-bar icon when the user switches themes.
+        // Re-render the menu-bar icon when the user switches themes OR
+        // when macOS switches effective appearance (light ↔ dark). The
+        // routing icon is non-template, so the system won't retint its
+        // rails automatically — we must re-paint explicitly.
         themeObserver = NotificationCenter.default.addObserver(
             forName: .init("ShuntActiveThemeChanged"),
             object: nil,
@@ -75,6 +78,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.renderStatusIcon()
         }
+        NSApp.addObserver(
+            self,
+            forKeyPath: "effectiveAppearance",
+            options: [.new],
+            context: nil
+        )
         statusTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             self?.refreshStatus()
         }
@@ -108,10 +117,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        menu.addItem(makeItem("Activate Extension", action: #selector(activateExtension)))
-        menu.addItem(makeItem("Deactivate Extension", action: #selector(deactivateExtension)))
-        menu.addItem(.separator())
-
         enableItem = makeItem("Enable Proxy", action: #selector(enableProxyMenu))
         disableItem = makeItem("Disable Proxy", action: #selector(disableProxyMenu))
         menu.addItem(enableItem)
@@ -120,7 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(makeItem("Settings…", action: #selector(showSettings), key: ","))
         menu.addItem(.separator())
-        menu.addItem(makeItem("Quit Shunt", action: #selector(NSApplication.terminate(_:)), key: "q"))
+
+        // Quit must route to NSApp (or the responder chain), not to self — if
+        // target is AppDelegate, NSMenuItem.isEnabled checks whether self
+        // responds to `terminate:`, which it doesn't, and the item greys out.
+        let quitItem = NSMenuItem(
+            title: "Quit Shunt",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        quitItem.target = NSApp
+        menu.addItem(quitItem)
 
         statusItem.menu = menu
         renderStatusIcon()
@@ -190,15 +205,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    @objc private func activateExtension() {
-        extensionManager.activate()
-    }
-
-    @objc private func deactivateExtension() {
-        extensionManager.deactivate()
-    }
-
+    /// Kept as public (non-@objc) so the General tab's "Manage" buttons can
+    /// still drive extension lifecycle. Removed from the menubar (too big a
+    /// footgun for a menu click); promoted to GUI-only.
     @objc private func showSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    // Re-render the menubar icon when macOS switches light/dark appearance.
+    override func observeValue(
+        forKeyPath keyPath: String?,
+        of object: Any?,
+        change: [NSKeyValueChangeKey : Any]?,
+        context: UnsafeMutableRawPointer?
+    ) {
+        if keyPath == "effectiveAppearance" {
+            Task { @MainActor in
+                self.renderStatusIcon()
+            }
+        }
     }
 }

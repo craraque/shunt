@@ -6,10 +6,64 @@ final class ProxyManager {
     private static let providerBundleIdentifier = "com.craraque.shunt.proxy"
     private static let displayName = "Shunt"
 
+    /// Posted (on the main queue) when the upstream launcher fails during
+    /// `enable()` with a non-cancellation error. `userInfo["error"]` is the
+    /// localized description. UI consumers subscribe to surface the failure
+    /// inline so the toggle can snap back and an error banner can render.
+    ///
+    /// Cancellation (Disable clicked mid-enable, or Shunt internally asked
+    /// the launcher to stop) is **not** posted — that's the user's own
+    /// action, not a failure, and bouncing the toggle based on it would
+    /// recreate the exact self-cancel loop we fixed.
+    static let launcherFailedNotification = Notification.Name("ShuntLauncherFailed")
+
     private let settingsStore = SettingsStore()
 
+    /// Public entry point. Runs the upstream launcher first (if any stages
+    /// are configured); only proceeds to the NE tunnel setup if the launcher
+    /// succeeds. An empty launcher is a no-op — behaviour identical to pre-3f
+    /// builds.
     func enable() {
-        Log.info("ProxyManager.enable: loadAllFromPreferences (callback)")
+        Task {
+            let settings = settingsStore.load()
+            if !settings.launcher.stages.isEmpty {
+                do {
+                    Log.info("launcher: starting \(settings.launcher.stages.count) stage(s)")
+                    try await AppServices.shared.launcherEngine.startAll(
+                        launcher: settings.launcher,
+                        upstream: settings.upstream,
+                        onEvent: { event in
+                            Log.info("launcher: stage=\(event.stageIndex + 1) \"\(event.entryName)\" → \(event.state) owned=\(event.ownedByUs)\(event.detail.map { " [\($0)]" } ?? "")")
+                        }
+                    )
+                    Log.info("launcher: all stages healthy — proceeding to tunnel")
+                } catch is CancellationError {
+                    // Intentional cancellation (Disable clicked during enable,
+                    // or a second enable cancelled us). Not a failure — do not
+                    // post the launcherFailed notification or the toggle UI
+                    // would bounce off on every rapid Enable→Disable cycle.
+                    Log.info("launcher: cancelled — tunnel NOT enabled")
+                    return
+                } catch {
+                    Log.error("launcher failed: \(error.localizedDescription) — NOT enabling tunnel")
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: Self.launcherFailedNotification,
+                            object: nil,
+                            userInfo: ["error": error.localizedDescription]
+                        )
+                    }
+                    return
+                }
+            }
+            await MainActor.run { self.enableTunnel() }
+        }
+    }
+
+    /// Existing tunnel-enable logic, invoked after the launcher has brought
+    /// all prerequisites up (or immediately when there are no prerequisites).
+    private func enableTunnel() {
+        Log.info("ProxyManager.enableTunnel: loadAllFromPreferences (callback)")
         NETransparentProxyManager.loadAllFromPreferences { managers, error in
             if let error {
                 let ns = error as NSError
@@ -104,6 +158,7 @@ final class ProxyManager {
             let managers = try await NETransparentProxyManager.loadAllFromPreferences()
             guard let manager = managers.first else {
                 Log.info("No manager to disable")
+                await stopLauncherIfAny()
                 return
             }
             manager.connection.stopVPNTunnel()
@@ -113,6 +168,21 @@ final class ProxyManager {
         } catch {
             Log.error("ProxyManager.disable failed: \(error.localizedDescription)")
         }
+        await stopLauncherIfAny()
+    }
+
+    /// Tears down anything the upstream launcher started. Safe to call even
+    /// when no launcher was configured (no-op).
+    private func stopLauncherIfAny() async {
+        let settings = settingsStore.load()
+        guard !settings.launcher.stages.isEmpty else { return }
+        Log.info("launcher: stopping (stages=\(settings.launcher.stages.count))")
+        await AppServices.shared.launcherEngine.stopAll(
+            launcher: settings.launcher,
+            onEvent: { event in
+                Log.info("launcher stop: stage=\(event.stageIndex + 1) \"\(event.entryName)\" → \(event.state) owned=\(event.ownedByUs)")
+            }
+        )
     }
 
     func removeConfig(completion: @escaping () -> Void) {

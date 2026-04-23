@@ -204,12 +204,169 @@ Strict sequence — each builds on the last:
 6. 3d.6 rules UI (replaces Apps tab)
 7. 3d.7 QA + docs
 
-### Phase 3d — VM lifecycle
+### Phase 3e — Post-ship UX fixes (from 2026-04-23 dogfooding)
 
-- [ ] Detectar estado de la VM Parallels (`prlctl list`)
-- [ ] Auto-start si está apagada
-- [ ] Health check: TCP reachability a `10.211.55.5:1080`
-- [ ] UI en VM tab mostrando estado
+- [ ] **Apply button has no visual feedback** (`Sources/Shunt/Views/UpstreamTab.swift:72-83`)
+  - Clicking "Apply" saves the JSON but shows no confirmation — user perceives the button as broken.
+  - Add a visual ack: transient toast ("Upstream saved"), brief checkmark on the button, or disabled-state transition ("Applied ✓" for ~1.5s then revert to "Apply"). Same pattern should apply anywhere else in Settings where a destructive/write action is taken without a modal.
+  - Bonus: `apply()` currently only persists JSON; it does NOT call `proxyManager.enable()`, so the running extension keeps its old `providerConfiguration` cached. Decide: either (a) auto-trigger `proxyManager.enable()` on Apply and label the button accordingly ("Apply & Reload"), or (b) keep save-only and surface a separate "Reload extension" affordance with the caveat that live connections will briefly drop. Whichever is chosen, the visual state must make it obvious which one just happened.
+
+- [ ] **Auto-compute `bindInterface` from upstream host IP**
+  - Today the user has to know macOS bridge numbers (`bridge100` for Parallels, `bridge102` for Tart, etc.) and pick from a Picker. Numbers change between reboots and can drift when VMs are recreated.
+  - Compute it from the host IP at save time (and refresh on demand) using `sysctl`/`getifaddrs` routing lookup — equivalent of `route -n get <host>` → `interface:` line. Cache the last-resolved interface and re-resolve if a dial fails.
+  - UX: replace the Picker with a read-only label ("Interface (auto): bridge102") + optional "Override" expandable if the resolver ever picks the wrong NIC. Default flow: user enters IP+port, hits Apply, Shunt figures out the rest.
+  - Keep the `bindInterface` field in `ShuntSettings.upstream` as an optional override, but stop requiring user input.
+
+### Phase 3f — Upstream Launcher (generalizes VM lifecycle)
+
+Generic "launch before connecting" orchestration. User defines one or more prerequisite commands/apps that Shunt brings up before enabling the tunnel and brings down after disabling. Tart is one concrete instance; sshuttle, `ssh -D`, Docker, any CLI-launched proxy is another. Replaces the Parallels-specific "Phase 3d — VM lifecycle" section below.
+
+Design decisions locked (2026-04-23 conversation):
+- **Lifecycle:** tied to tunnel (start on Enable Proxy, stop on Disable Proxy).
+- **UI location:** expanded section inside the existing Upstream tab, below "Interface binding".
+- **Ordering:** stages model (CI/CD-style). Entries within a stage run in parallel; stages run sequentially. Each stage waits for all its entries' health checks to pass before moving to the next.
+- **Idempotency:** health check runs BEFORE `startCommand`. If the prereq is already healthy, do not re-start; mark as `alreadyRunning`. On Disable Proxy, only stop entries that were spawned by us — leave pre-existing processes alone.
+- **Health probes:** user picks per entry from 4 options:
+  1. `portOpen` — TCP connect to `upstream.host:upstream.port`.
+  2. `socks5Handshake` — TCP + SOCKS5 greeting exchange.
+  3. `egressCidrMatch(cidr, probeURL)` — fetch probeURL via SOCKS5, parse IP, match CIDR.
+  4. `egressDiffersFromDirect(probeURL)` — fetch probeURL direct (IP A) and via SOCKS5 (IP B); pass if `A != B`. Default `probeURL` = `https://ifconfig.me/ip`.
+- **Timeouts:** default `startTimeoutSeconds` = 60, `probeIntervalSeconds` = 2, both editable per entry.
+- **Failure:** any entry failing its health check within timeout aborts the whole chain. Already-started entries owned by us get rolled back. Tunnel is NOT enabled. Error surfaced in `SettingsViewModel.lastError`.
+- **Empirical note (reboot test 2026-04-23):** Tart guest reaches `portOpen` state within ~10s of boot, but ZCC auth completes ~35s later. `egressDiffersFromDirect` was empirically validated as the right default probe for ZCC-backed upstreams — port-only checks produce a false-positive during that ~35s window and cause Shunt to enable the tunnel while traffic still leaks to the ISP.
+
+#### 3f.1 — Data model + migration
+
+- [ ] **Add types to `Sources/ShuntCore/Settings.swift`:**
+  ```swift
+  public struct UpstreamLauncher: Codable, Hashable {
+      public var stages: [UpstreamLauncherStage] = []
+      public static let empty = UpstreamLauncher()
+  }
+  public struct UpstreamLauncherStage: Codable, Identifiable, Hashable {
+      public var id: UUID
+      public var name: String            // "Stage 1"
+      public var entries: [UpstreamLauncherEntry] = []
+  }
+  public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
+      public var id: UUID
+      public var name: String
+      public var enabled: Bool = true
+      public var startCommand: String    // run via /bin/zsh -l -c
+      public var stopCommand: String?    // nil → SIGTERM tracked PID
+      public var healthProbe: HealthProbe = .portOpen
+      public var probeIntervalSeconds: Int = 2
+      public var startTimeoutSeconds: Int = 60
+  }
+  public enum HealthProbe: Codable, Hashable {
+      case portOpen
+      case socks5Handshake
+      case egressCidrMatch(cidr: String, probeURL: URL)
+      case egressDiffersFromDirect(probeURL: URL)
+  }
+  ```
+- [ ] **Add to `ShuntSettings`:** `public var launcher: UpstreamLauncher = .empty` with optional decode (absent field = `.empty`).
+- [ ] **Unit tests:** decode existing v1 JSONs (no `launcher` key) → `.empty`; decode with populated launcher → round-trips.
+- [ ] **No `schemaVersion` bump** — additive change, forward/back compatible at JSON level.
+
+#### 3f.2 — Engine (headless)
+
+- [ ] **New file `Sources/ShuntCore/UpstreamLauncherEngine.swift`.** Actor-based, all-async API.
+  ```swift
+  public actor UpstreamLauncherEngine {
+      public func startAll(launcher: UpstreamLauncher, upstream: UpstreamProxy,
+                           progress: (StageIndex, EntryID, EntryState) -> Void) async throws
+      public func stopAll() async
+  }
+  ```
+- [ ] **State machine per entry:** `.idle` → `.alreadyRunning` (probe passed before start) or `.starting(pid, since)` → `.running(pid?, ownedByUs)` / `.failed(reason)`. Stop path: `.running` → `.stopping` → `.stopped`.
+- [ ] **Process spawn:** `Process` + `/bin/zsh -l -c "<startCommand>"` so user's `PATH` resolves (`tart`, `brew`-installed binaries). Capture PID. stdout/stderr → ring buffer per entry for later UI inspection.
+- [ ] **Stage orchestration:** for each stage, `TaskGroup` over its entries. All entries probe health first (parallel). Those that pass → `.alreadyRunning`. Those that fail → spawn + poll every `probeIntervalSeconds` until pass or `startTimeoutSeconds` elapsed. If any entry in stage fails → cancel group, rollback previously-succeeded stages (stop our-owned entries), throw.
+- [ ] **Stop flow:** reverse stage order. Within a stage, parallel stop. Only act on `.running(ownedByUs: true)`. Run `stopCommand` if set, else `SIGTERM` to tracked PID; 10s grace; `SIGKILL` if still alive.
+- [ ] **Probe implementations** in `ShuntCore/LauncherProbes.swift`:
+  1. `portOpen` — `NWConnection` TCP to `upstream.host:upstream.port`, 2s connect timeout.
+  2. `socks5Handshake` — connect + send `0x05 0x01 0x00`, expect `0x05 0x00`, 2s timeout.
+  3. `egressCidrMatch(cidr, probeURL)` — `URLSession` with SOCKS5 proxy set to upstream, fetch `probeURL`, parse IP string, CIDR match (reuse `HostMatcher` from 3d.3).
+  4. `egressDiffersFromDirect(probeURL)` — one direct fetch + one SOCKS5 fetch in parallel; pass if IPs differ and both non-empty.
+- [ ] **Unit tests:** mock SOCKS5 server for probe 1/2; stub URLSession for 3/4; stage orchestration test with 2 stages × 2 entries each, force one to fail, verify rollback stops the right PIDs.
+
+#### 3f.3 — Integration into `ProxyManager`
+
+- [ ] **`ProxyManager.enable()` gains a pre-tunnel step:**
+  ```swift
+  do {
+      try await launcherEngine.startAll(launcher: settings.launcher,
+                                        upstream: settings.upstream,
+                                        progress: { stage, entry, state in
+          // Publish to SettingsViewModel.launcherStatus
+      })
+  } catch {
+      // Surface error, do NOT proceed to tunnel enable
+      return
+  }
+  // existing: providerConfiguration + saveToPreferences + startVPNTunnel
+  ```
+- [ ] **`ProxyManager.disable()`** ends with `await launcherEngine.stopAll()` after `stopVPNTunnel`.
+- [ ] **Empty launcher is a no-op** — existing users without prereqs see zero behavior change.
+- [ ] **Error surface:** launcher failures set `settings.lastError` (string) consumed by General/Upstream tabs. UI shows red banner + "Retry" button.
+- [ ] **Manual smoke:** add a launcher entry pointing to `tart run mac-zscaler-test` with `egressDiffersFromDirect` probe; toggle Disable→Enable from menu; verify tunnel comes up only after Tart's guest SOCKS5 produces a non-ISP egress.
+
+#### 3f.4 — UI in `UpstreamTab`
+
+- [ ] **New section below "Interface binding"**: header "Launch before connecting" + `[+ Add stage]` button.
+- [ ] **Each stage renders as a collapsible GroupBox-style card**: editable name, list of entries, `[+ Add entry]` at the bottom, delete stage button (disabled if stage has entries).
+- [ ] **Each entry row**: status dot + name + small badge `[running · ours]` / `[running · external]` / `[idle]` / `[failed]` / `[starting]` + `[⋯]` overflow menu.
+- [ ] **Status dot colors** (pulled from active theme):
+  - `idle` → neutral gray
+  - `starting` → accent (amber) with pulse animation
+  - `running + ours` → accent solid
+  - `running + external` → theme's `statusActive` (PCB green)
+  - `failed` → red
+- [ ] **`[⋯]` menu per entry:** Edit, Move up, Move down, Promote to own stage, Merge with previous stage, Delete. (No drag'n'drop in v1 — deferred to v2 per design note.)
+- [ ] **Entry editor sheet** (modal):
+  - Name (required)
+  - Start command (multiline, monospace)
+  - Stop command (multiline, monospace, optional with placeholder "SIGTERM tracked PID")
+  - Health probe: radio group (4 options); conditional fields per choice (CIDR text / probeURL / neither)
+  - Start timeout slider/stepper (10–300s)
+  - Probe interval stepper (1–30s)
+  - "Enabled" toggle
+- [ ] **Warning banner on first-ever entry add:** "Shunt will execute this command as your user. Only add commands you trust." Dismissable, persisted "don't show again".
+- [ ] **Live status wiring:** `SettingsViewModel.launcherStatus: [StageIndex: [EntryID: EntryState]]` publishes updates from the engine's `progress` callback; UI diffs and animates dots.
+
+#### 3f.5 — QA + docs
+
+- [ ] **Manual test matrix:**
+  - Empty launcher → tunnel behaves as today (baseline).
+  - One stage, one entry (Tart + `egressDiffersFromDirect`) → enable cycle succeeds; disable stops the VM we started.
+  - Two stages in sequence → stage 2 doesn't start until stage 1 is green.
+  - Two entries parallel within a stage → both start at once, both health-probe independently.
+  - Pre-existing running prereq (Tart already up) → entry marks `alreadyRunning`; on disable, Tart is NOT stopped.
+  - Rollback: one entry in stage 2 fails → stage 1 entries we started get stopped; stage 2 untouched; error banner visible.
+  - CIDR match: Zscaler entry with `cidr = "136.226.0.0/16"` → passes only after ZCC auth completes.
+- [ ] **`docs/upstream-launcher.md`:** concept explainer + three worked examples (Tart, `ssh -D 1080`, `sshuttle`). Include the empirical ZCC-auth-window note.
+- [ ] **DESIGN.md Decisions Log** entry dated 2026-04-23: "Upstream launcher feature added; stages model chosen over flat ordered list to express mix of parallel + sequential; `egressDiffersFromDirect` default probe validated against ZCC auth window."
+- [ ] **Memory close-out:** update `project_shunt_upstream_launcher.md` status from "design pending" to "shipped in v0.3" (when merged).
+
+### Execution order
+
+Strict sequence, one commit per sub-phase:
+1. 3f.1 data model (smallest, no runtime risk)
+2. 3f.2 engine (headless, unit-testable)
+3. 3f.3 integration (minimal surface change in ProxyManager)
+4. 3f.4 UI (largest chunk; land last so the feature becomes user-accessible in one PR)
+5. 3f.5 QA + docs
+
+Rough effort estimate: 3f.1 ~2h, 3f.2 ~4h, 3f.3 ~2h, 3f.4 ~6h, 3f.5 ~2h. ~16h total, 5 commits.
+
+### Phase 3d — VM lifecycle (SUPERSEDED by 3f)
+
+The Parallels-specific auto-start idea below is subsumed by Phase 3f. Keeping here only to preserve original intent for the Decisions Log; will be deleted once 3f.5 ships.
+
+- [ ] ~~Detectar estado de la VM Parallels (`prlctl list`)~~
+- [ ] ~~Auto-start si está apagada~~
+- [ ] ~~Health check: TCP reachability a `10.211.55.5:1080`~~
+- [ ] ~~UI en VM tab mostrando estado~~
 
 ## Phase 4 — macOS guest migration
 

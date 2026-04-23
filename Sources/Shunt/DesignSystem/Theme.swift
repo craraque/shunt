@@ -50,50 +50,56 @@ struct ShuntTheme: Identifiable, Hashable {
 
 extension ShuntTheme {
 
-    /// Default. Evolves the v0.1 Signal Amber into a deeper, more pigmented
-    /// burnt orange — "heated tungsten" rather than "safety tape".
+    /// Warm tungsten body with a classic green "on" LED. Each theme from
+    /// v0.2.2 follows the Chassis pattern: a distinct accent hue for the
+    /// app's identity, paired with a signature LED colour that makes the
+    /// menubar icon recognisable at a glance.
     static let filament = ShuntTheme(
         id: "filament",
         name: "Filament",
-        rationale: "Warm tungsten on graphite. The generalist default.",
-        accentLight:        Color(hex: 0xC2410C),
-        accentDark:         Color(hex: 0xFB923C),
-        statusActiveLight:  Color(hex: 0x15803D),
-        statusActiveDark:   Color(hex: 0x4ADE80),
-        windowBgLight:      Color(hex: 0xFAF8F4),
-        windowBgDark:       Color(hex: 0x17160F),
-        rowHoverLight:      Color(hex: 0xF3ECDF),
-        rowHoverDark:       Color(hex: 0x231F14)
+        rationale: "Heated tungsten on graphite. Green indicator LED. The generalist default.",
+        accentLight:        Color(hex: 0xEA580C),
+        accentDark:         Color(hex: 0xFDBA74),
+        statusActiveLight:  Color(hex: 0x22C55E),
+        statusActiveDark:   Color(hex: 0x86EFAC),
+        windowBgLight:      Color(hex: 0xFAF6EE),
+        windowBgDark:       Color(hex: 0x17140D),
+        rowHoverLight:      Color(hex: 0xF3EADA),
+        rowHoverDark:       Color(hex: 0x231E12)
     )
 
-    /// Cool lab instrument. Iodine blue rather than the overused teal.
+    /// Cobalt lab glass with a teal LED — analogous-but-distinct cool pair.
+    /// Teal (not green) keeps Iodine visually separate from Filament in the
+    /// menubar even when both themes live in the same dock.
     static let iodine = ShuntTheme(
         id: "iodine",
         name: "Iodine",
-        rationale: "Lab glass at 6500K. For the dark-terminal developer.",
+        rationale: "Cobalt glass at 6500K. Teal indicator LED. For the cool-terminal developer.",
         accentLight:        Color(hex: 0x2563EB),
-        accentDark:         Color(hex: 0x7CA8FF),
-        statusActiveLight:  Color(hex: 0x059669),
-        statusActiveDark:   Color(hex: 0x34D399),
-        windowBgLight:      Color(hex: 0xF7F8FA),
-        windowBgDark:       Color(hex: 0x0F1115),
-        rowHoverLight:      Color(hex: 0xEAEEF6),
-        rowHoverDark:       Color(hex: 0x181C24)
+        accentDark:         Color(hex: 0xBFDBFE),
+        statusActiveLight:  Color(hex: 0x14B8A6),
+        statusActiveDark:   Color(hex: 0x5EEAD4),
+        windowBgLight:      Color(hex: 0xF5F7FA),
+        windowBgDark:       Color(hex: 0x0C1117),
+        rowHoverLight:      Color(hex: 0xE6ECF6),
+        rowHoverDark:       Color(hex: 0x161D27)
     )
 
-    /// Archival ink on cotton stock. Editorial restraint, not retro kitsch.
+    /// Violet ink with a lime LED — complementary pair for high visual
+    /// contrast. Renamed in spirit from navy-on-cotton to vivid violet so
+    /// it doesn't compete with Iodine on the blue axis.
     static let blueprint = ShuntTheme(
         id: "blueprint",
         name: "Blueprint",
-        rationale: "Archival ink on cotton stock. For the editorial minimalist.",
-        accentLight:        Color(hex: 0x1E3A8A),
-        accentDark:         Color(hex: 0xA5B8E3),
-        statusActiveLight:  Color(hex: 0x166534),
-        statusActiveDark:   Color(hex: 0x7DD3A0),
-        windowBgLight:      Color(hex: 0xF5F1E8),
-        windowBgDark:       Color(hex: 0x131722),
-        rowHoverLight:      Color(hex: 0xECE6D6),
-        rowHoverDark:       Color(hex: 0x1B2130)
+        rationale: "Violet ink on cotton, lime indicator LED. For the editorial maximalist.",
+        accentLight:        Color(hex: 0x7C3AED),
+        accentDark:         Color(hex: 0xDDD6FE),
+        statusActiveLight:  Color(hex: 0x84CC16),
+        statusActiveDark:   Color(hex: 0xBEF264),
+        windowBgLight:      Color(hex: 0xF7F5FA),
+        windowBgDark:       Color(hex: 0x110E1A),
+        rowHoverLight:      Color(hex: 0xECE4F6),
+        rowHoverDark:       Color(hex: 0x1C1626)
     )
 
     /// Anodized aluminum with one indicator LED. Monochrome + single cyan signal.

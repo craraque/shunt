@@ -4,9 +4,15 @@ import NetworkExtension
 struct GeneralTab: View {
     @ObservedObject var model: SettingsViewModel
     @State private var statusRaw: Int = 0
-    @State private var proxyEnabled: Bool = false
+    /// User's last-expressed intent for the proxy toggle. Decoupled from the
+    /// polled tunnel status so the toggle doesn't bounce while the launcher
+    /// is still bringing up prereqs (which can take 30-60 s with a cold VM).
+    /// Only mutated by: (a) user clicking the toggle, (b) a real
+    /// `ShuntLauncherFailed` notification, (c) explicit `await disable()`.
+    @State private var desiredEnabled: Bool = false
     @State private var statusTimer: Timer?
-    @State private var busy = false
+    @State private var launcherFailedObserver: NSObjectProtocol?
+    @State private var lastLauncherError: String?
     @Environment(\.shuntTheme) private var theme
     @Environment(\.colorScheme) private var scheme
 
@@ -32,14 +38,20 @@ struct GeneralTab: View {
                     )
                     VStack(spacing: 0) {
                         FormRow("Enabled") {
-                            Toggle("", isOn: $proxyEnabled)
+                            // Binding drives intent → action in one step, so
+                            // there's no refresh-driven write path that could
+                            // bounce the toggle back while the launcher is
+                            // still bringing up prereqs.
+                            Toggle("", isOn: Binding<Bool>(
+                                get: { desiredEnabled },
+                                set: { newValue in
+                                    desiredEnabled = newValue
+                                    handleToggle(newValue)
+                                }
+                            ))
                                 .toggleStyle(.switch)
                                 .labelsHidden()
                                 .tint(theme.accent(for: scheme))
-                                .disabled(busy)
-                                .onChange(of: proxyEnabled) { _, newValue in
-                                    handleToggle(newValue)
-                                }
                         }
                         Divider()
                         FormRow("Upstream") {
@@ -54,6 +66,24 @@ struct GeneralTab: View {
                         }
                     }
                     .padding(.horizontal, 4)
+
+                    if let err = lastLauncherError {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("Launcher failed: \(err)")
+                                .font(.shuntCaption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            Button("Dismiss") { lastLauncherError = nil }
+                                .buttonStyle(.borderless)
+                                .font(.shuntCaption)
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(.top, 6)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -110,10 +140,23 @@ struct GeneralTab: View {
             statusTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
                 refresh()
             }
+            launcherFailedObserver = NotificationCenter.default.addObserver(
+                forName: ProxyManager.launcherFailedNotification,
+                object: nil,
+                queue: .main
+            ) { note in
+                let msg = note.userInfo?["error"] as? String ?? "unknown error"
+                lastLauncherError = msg
+                desiredEnabled = false
+            }
         }
         .onDisappear {
             statusTimer?.invalidate()
             statusTimer = nil
+            if let obs = launcherFailedObserver {
+                NotificationCenter.default.removeObserver(obs)
+                launcherFailedObserver = nil
+            }
         }
     }
 
@@ -163,24 +206,24 @@ struct GeneralTab: View {
 
     // MARK: - Refresh + actions
 
+    /// Refreshes the polled tunnel status for display. Does **not** touch
+    /// `desiredEnabled` — the toggle's visual state tracks user intent, not
+    /// the in-progress tunnel state.
     private func refresh() {
         Task { @MainActor in
             let raw = await services.proxyManager.statusRaw()
             statusRaw = raw
-            proxyEnabled = raw == 2 || raw == 3 || raw == 4
         }
     }
 
+    /// Fire-and-forget enable/disable. UI feedback comes from `statusRaw`
+    /// (polled every 3 s) and from the `ShuntLauncherFailed` observer.
     private func handleToggle(_ newValue: Bool) {
-        busy = true
         if newValue {
+            lastLauncherError = nil
             services.proxyManager.enable()
         } else {
             Task { await services.proxyManager.disable() }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            refresh()
-            busy = false
         }
     }
 

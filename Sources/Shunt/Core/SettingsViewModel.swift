@@ -341,4 +341,87 @@ final class SettingsViewModel: ObservableObject {
         }
         return "SOCKS5 handshake OK"
     }
+
+    // MARK: - Upstream launcher (Phase 3f)
+
+    func addLauncherStage() {
+        let nextNumber = settings.launcher.stages.count + 1
+        var launcher = settings.launcher
+        launcher.stages.append(
+            UpstreamLauncherStage(name: "Stage \(nextNumber)", entries: [])
+        )
+        settings.launcher = launcher
+        save()
+    }
+
+    func removeLauncherStage(stageID: UUID) {
+        settings.launcher.stages.removeAll { $0.id == stageID }
+        save()
+    }
+
+    func renameLauncherStage(stageID: UUID, to name: String) {
+        guard let idx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        settings.launcher.stages[idx].name = name
+        save()
+    }
+
+    func addLauncherEntry(to stageID: UUID) {
+        guard let idx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        settings.launcher.stages[idx].entries.append(
+            UpstreamLauncherEntry(name: "New entry")
+        )
+        save()
+    }
+
+    func removeLauncherEntry(stageID: UUID, entryID: UUID) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        settings.launcher.stages[sIdx].entries.removeAll { $0.id == entryID }
+        save()
+    }
+
+    func updateLauncherEntry(stageID: UUID, entry: UpstreamLauncherEntry) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        guard let eIdx = settings.launcher.stages[sIdx].entries.firstIndex(where: { $0.id == entry.id }) else { return }
+        settings.launcher.stages[sIdx].entries[eIdx] = entry
+        save()
+    }
+
+    /// Promote a single entry to a brand-new stage inserted immediately after
+    /// the entry's current stage. Used by the `[⋯]` menu action.
+    func promoteEntryToOwnStage(stageID: UUID, entryID: UUID) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        guard let eIdx = settings.launcher.stages[sIdx].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let entry = settings.launcher.stages[sIdx].entries.remove(at: eIdx)
+        let newName = "Stage \(settings.launcher.stages.count + 1)"
+        let newStage = UpstreamLauncherStage(name: newName, entries: [entry])
+        settings.launcher.stages.insert(newStage, at: sIdx + 1)
+        save()
+    }
+
+    /// Move the entry into the previous stage (merging the two stages from the
+    /// entry's perspective). If the entry is already in the first stage, no-op.
+    func mergeEntryWithPreviousStage(stageID: UUID, entryID: UUID) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        guard sIdx > 0 else { return }
+        guard let eIdx = settings.launcher.stages[sIdx].entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let entry = settings.launcher.stages[sIdx].entries.remove(at: eIdx)
+        settings.launcher.stages[sIdx - 1].entries.append(entry)
+        // If the source stage is now empty, keep it — user may still want the slot.
+        save()
+    }
+
+    func moveLauncherEntryUp(stageID: UUID, entryID: UUID) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        guard let eIdx = settings.launcher.stages[sIdx].entries.firstIndex(where: { $0.id == entryID }), eIdx > 0 else { return }
+        settings.launcher.stages[sIdx].entries.swapAt(eIdx, eIdx - 1)
+        save()
+    }
+
+    func moveLauncherEntryDown(stageID: UUID, entryID: UUID) {
+        guard let sIdx = settings.launcher.stages.firstIndex(where: { $0.id == stageID }) else { return }
+        let count = settings.launcher.stages[sIdx].entries.count
+        guard let eIdx = settings.launcher.stages[sIdx].entries.firstIndex(where: { $0.id == entryID }), eIdx < count - 1 else { return }
+        settings.launcher.stages[sIdx].entries.swapAt(eIdx, eIdx + 1)
+        save()
+    }
 }

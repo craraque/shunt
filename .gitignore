@@ -8,3 +8,5 @@ Package.resolved
 Scripts/.build-number
 .claude/
 .gstack/
+logs/
+*.zip

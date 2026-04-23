@@ -10,6 +10,7 @@ final class AppServices {
     let extensionManager = SystemExtensionManager()
     let proxyManager = ProxyManager()
     let settingsStore = SettingsStore()
+    let launcherEngine = UpstreamLauncherEngine()
 
     private init() {}
 }

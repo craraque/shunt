@@ -99,6 +99,10 @@ struct UpstreamTab: View {
                     }
                     .padding(.top, 2)
                 }
+
+                Divider().padding(.vertical, 4)
+
+                UpstreamLauncherSection(model: model)
             }
             .padding(28)
         }

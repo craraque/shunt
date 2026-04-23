@@ -31,5 +31,10 @@ let package = Package(
             name: "ShuntTest",
             path: "Sources/ShuntTest"
         ),
+        .testTarget(
+            name: "ShuntCoreTests",
+            dependencies: ["ShuntCore"],
+            path: "Tests/ShuntCoreTests"
+        ),
     ]
 )

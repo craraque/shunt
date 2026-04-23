@@ -32,6 +32,100 @@ public struct UpstreamProxy: Codable, Hashable {
     }
 }
 
+// MARK: - Upstream launcher (Phase 3f)
+
+/// A command Shunt runs before enabling the tunnel and stops after disabling it.
+/// Entries are grouped into stages; stages run sequentially, entries within a
+/// stage run in parallel. See `docs/upstream-launcher.md`.
+public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
+    public var id: UUID
+    public var name: String
+    public var enabled: Bool
+    /// Shell command run via `/bin/zsh -l -c` so the user's PATH resolves
+    /// `tart`, `brew`-installed binaries, etc. Ignored when the health probe
+    /// already passes at startup (idempotency).
+    public var startCommand: String
+    /// Optional explicit stop command. When nil, the engine SIGTERMs the PID
+    /// it tracked at spawn time (with a 10 s grace then SIGKILL). When set,
+    /// the string is run via the same shell as `startCommand`.
+    public var stopCommand: String?
+    public var healthProbe: HealthProbe
+    public var probeIntervalSeconds: Int
+    public var startTimeoutSeconds: Int
+
+    public init(id: UUID = UUID(),
+                name: String = "",
+                enabled: Bool = true,
+                startCommand: String = "",
+                stopCommand: String? = nil,
+                healthProbe: HealthProbe = .portOpen,
+                probeIntervalSeconds: Int = 2,
+                startTimeoutSeconds: Int = 60) {
+        self.id = id
+        self.name = name
+        self.enabled = enabled
+        self.startCommand = startCommand
+        self.stopCommand = stopCommand
+        self.healthProbe = healthProbe
+        self.probeIntervalSeconds = probeIntervalSeconds
+        self.startTimeoutSeconds = startTimeoutSeconds
+    }
+}
+
+/// A group of entries that run in parallel. Stages themselves run sequentially
+/// in the order they appear in `UpstreamLauncher.stages`.
+public struct UpstreamLauncherStage: Codable, Identifiable, Hashable {
+    public var id: UUID
+    public var name: String
+    public var entries: [UpstreamLauncherEntry]
+
+    public init(id: UUID = UUID(), name: String = "Stage", entries: [UpstreamLauncherEntry] = []) {
+        self.id = id
+        self.name = name
+        self.entries = entries
+    }
+}
+
+public struct UpstreamLauncher: Codable, Hashable {
+    public var stages: [UpstreamLauncherStage]
+
+    public init(stages: [UpstreamLauncherStage] = []) {
+        self.stages = stages
+    }
+
+    public static let empty = UpstreamLauncher()
+
+    /// Convenience: every entry across every stage, flattened in declared order.
+    public var allEntries: [UpstreamLauncherEntry] {
+        stages.flatMap(\.entries)
+    }
+}
+
+/// How the engine decides an entry is "ready". The first two modes only look
+/// at the upstream socket; the last two validate the end-to-end egress path
+/// (ZCC auth gate, geo-shift proxy, etc.).
+public enum HealthProbe: Codable, Hashable {
+    /// TCP connect to `upstream.host:upstream.port`. Fast, no false negatives
+    /// on the happy path, but false-positive during the "daemon up, ZCC auth
+    /// pending" window.
+    case portOpen
+    /// TCP connect + SOCKS5 greeting exchange (`05 01 00` → `05 00`). Proves a
+    /// SOCKS5 server is answering; still doesn't validate upstream egress.
+    case socks5Handshake
+    /// Fetch `probeURL` through the upstream SOCKS5 proxy, parse the body as
+    /// an IP string, and match against `cidr`. Use when the expected egress
+    /// range is known (e.g. Zscaler `136.226.0.0/16`).
+    case egressCidrMatch(cidr: String, probeURL: URL)
+    /// Fetch `probeURL` twice — once direct, once through the upstream SOCKS5 —
+    /// and pass only when the two IPs differ. CIDR-free, works for any
+    /// upstream whose purpose is to shift egress off the local ISP.
+    case egressDiffersFromDirect(probeURL: URL)
+
+    /// Default probe URL when the user picks an egress-based mode for the
+    /// first time. `https://ifconfig.me/ip` returns a plain IP body, no JSON.
+    public static let defaultProbeURL = URL(string: "https://ifconfig.me/ip")!
+}
+
 // MARK: - Compound rules (v2)
 
 public struct HostPattern: Codable, Hashable, Identifiable {
@@ -99,16 +193,22 @@ public struct ShuntSettings: Codable, Hashable {
     /// Shunt app module owns the actual Color values. Kept in settings (not
     /// UserDefaults) so export/import preserves user choice.
     public var themeID: String
+    /// Prerequisite processes Shunt starts before the tunnel and stops after.
+    /// Empty (the default) is a no-op — existing settings files without this
+    /// field decode fine and behave as they did pre-Phase-3f.
+    public var launcher: UpstreamLauncher
 
     public init(managedApps: [ManagedApp] = [],
                 upstream: UpstreamProxy = UpstreamProxy(),
                 rules: [Rule]? = nil,
-                themeID: String = "filament") {
+                themeID: String = "filament",
+                launcher: UpstreamLauncher = .empty) {
         self.schemaVersion = 2
         self.managedApps = managedApps
         self.upstream = upstream
         self.rules = rules ?? Self.derive(apps: managedApps)
         self.themeID = themeID
+        self.launcher = launcher
     }
 
     public static let empty = ShuntSettings()
@@ -122,7 +222,7 @@ public struct ShuntSettings: Codable, Hashable {
     // MARK: Codable (with v1 → v2 migration)
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, managedApps, upstream, rules, themeID
+        case schemaVersion, managedApps, upstream, rules, themeID, launcher
     }
 
     public init(from decoder: Decoder) throws {
@@ -130,6 +230,7 @@ public struct ShuntSettings: Codable, Hashable {
         self.managedApps = (try? c.decode([ManagedApp].self, forKey: .managedApps)) ?? []
         self.upstream = (try? c.decode(UpstreamProxy.self, forKey: .upstream)) ?? UpstreamProxy()
         self.themeID = (try? c.decode(String.self, forKey: .themeID)) ?? "filament"
+        self.launcher = (try? c.decode(UpstreamLauncher.self, forKey: .launcher)) ?? .empty
         let decodedSchemaVersion = (try? c.decode(Int.self, forKey: .schemaVersion)) ?? 1
         if c.contains(.rules) {
             self.rules = (try? c.decode([Rule].self, forKey: .rules)) ?? []
@@ -148,6 +249,7 @@ public struct ShuntSettings: Codable, Hashable {
         try c.encode(upstream, forKey: .upstream)
         try c.encode(rules, forKey: .rules)
         try c.encode(themeID, forKey: .themeID)
+        try c.encode(launcher, forKey: .launcher)
     }
 
     /// Deterministic v1 → v2 mapping: one rule per managed app, preserving the
