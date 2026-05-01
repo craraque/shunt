@@ -25,10 +25,78 @@ public struct UpstreamProxy: Codable, Hashable {
     /// on a virtual bridge not reachable via the primary interface.
     public var bindInterface: String?
 
-    public init(host: String = "127.0.0.1", port: UInt16 = 1080, bindInterface: String? = nil) {
+    /// SOCKS5 username/password auth. When BOTH are non-empty, the bridge
+    /// negotiates `05 02 00 02` greeting + RFC 1929 user/pass subnegotiation
+    /// instead of the no-auth `05 01 00` path. Default empty = no-auth.
+    public var username: String
+    public var password: String
+
+    /// Phase 7 — when true, SOCKS5 CONNECT requests use ATYP=0x03 (domain
+    /// name) for FQDN destinations, deferring DNS resolution to the upstream
+    /// proxy. Improves hostname-based filtering at the upstream (Zscaler URL
+    /// policy, SNI matching) and avoids DNS leaks of routed hostnames to the
+    /// host's local resolvers.
+    ///
+    /// Falls back automatically to ATYP=0x01 / 0x04 when the destination is
+    /// already an IP literal, so apps that connect directly by IP keep
+    /// working. Default `true` for new entries; legacy decode lands on
+    /// `false` to preserve the exact behaviour shipped before this field
+    /// existed (no surprise migration).
+    public var useRemoteDNS: Bool
+
+    public init(host: String = "127.0.0.1",
+                port: UInt16 = 1080,
+                bindInterface: String? = nil,
+                username: String = "",
+                password: String = "",
+                useRemoteDNS: Bool = true) {
         self.host = host
         self.port = port
         self.bindInterface = bindInterface
+        self.username = username
+        self.password = password
+        self.useRemoteDNS = useRemoteDNS
+    }
+
+    /// True iff both username + password are non-empty after trimming.
+    public var requiresAuth: Bool {
+        !username.trimmingCharacters(in: .whitespaces).isEmpty &&
+        !password.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    // Custom Codable so adding `username` / `password` / `useRemoteDNS` as
+    // new fields doesn't reset existing settings files. Older payloads
+    // decode fine with the new fields defaulting to safe values.
+    private enum CodingKeys: String, CodingKey {
+        case host, port, bindInterface, username, password, useRemoteDNS
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.host = (try? c.decode(String.self, forKey: .host)) ?? "127.0.0.1"
+        self.port = (try? c.decode(UInt16.self, forKey: .port)) ?? 1080
+        self.bindInterface = try? c.decodeIfPresent(String.self, forKey: .bindInterface)
+        self.username = (try? c.decodeIfPresent(String.self, forKey: .username)) ?? ""
+        self.password = (try? c.decodeIfPresent(String.self, forKey: .password)) ?? ""
+        // Legacy decode → `true` because the pre-toggle behaviour was
+        // already "prefer the hostname when the OS gives us one" (provider
+        // passes `tcp.remoteHostname` to SOCKS5Bridge, which already sends
+        // ATYP=0x03 for non-IP-literal targets). Defaulting to `true` here
+        // preserves that exact behaviour. Toggle OFF forces IP-literal
+        // CONNECT (ATYP=0x01/0x04) using the OS's resolved endpoint.
+        self.useRemoteDNS = (try? c.decodeIfPresent(Bool.self, forKey: .useRemoteDNS)) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(host, forKey: .host)
+        try c.encode(port, forKey: .port)
+        try c.encodeIfPresent(bindInterface, forKey: .bindInterface)
+        // Only write username/password when set, to keep the JSON minimal
+        // and to keep secrets out of the file when not used.
+        if !username.isEmpty { try c.encode(username, forKey: .username) }
+        if !password.isEmpty { try c.encode(password, forKey: .password) }
+        try c.encode(useRemoteDNS, forKey: .useRemoteDNS)
     }
 }
 
@@ -37,6 +105,25 @@ public struct UpstreamProxy: Codable, Hashable {
 /// A command Shunt runs before enabling the tunnel and stops after disabling it.
 /// Entries are grouped into stages; stages run sequentially, entries within a
 /// stage run in parallel. See `docs/upstream-launcher.md`.
+/// What Shunt should do when the launcher detects this entry is *already
+/// healthy* on enable (i.e. the underlying daemon was started outside Shunt's
+/// supervision). Determines whether the entry is treated as `ownedByUs` and
+/// therefore whether `stopCommand` runs on disable.
+public enum LauncherExternalPolicy: String, Codable, CaseIterable, Hashable {
+    /// Default for new entries. Engine emits a `pendingDecision` event so the
+    /// UI can prompt the user. Until they answer, the entry behaves as
+    /// `neverReclaim` (no stopCommand on disable).
+    case ask
+    /// Treat already-running instances as ours. `stopCommand` always runs on
+    /// disable. Use for VMs / daemons whose lifecycle Shunt fully manages
+    /// (Parallels, Tart with no other consumers).
+    case alwaysReclaim
+    /// Legacy behavior — only run stopCommand for processes Shunt itself
+    /// spawned in this session. Use when something else may have started the
+    /// daemon and stopping it would inconvenience another consumer.
+    case neverReclaim
+}
+
 public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
     public var id: UUID
     public var name: String
@@ -52,6 +139,8 @@ public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
     public var healthProbe: HealthProbe
     public var probeIntervalSeconds: Int
     public var startTimeoutSeconds: Int
+    /// How to treat instances already running on enable. See enum docs.
+    public var externalPolicy: LauncherExternalPolicy
 
     public init(id: UUID = UUID(),
                 name: String = "",
@@ -60,7 +149,8 @@ public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
                 stopCommand: String? = nil,
                 healthProbe: HealthProbe = .portOpen,
                 probeIntervalSeconds: Int = 2,
-                startTimeoutSeconds: Int = 60) {
+                startTimeoutSeconds: Int = 60,
+                externalPolicy: LauncherExternalPolicy = .ask) {
         self.id = id
         self.name = name
         self.enabled = enabled
@@ -69,6 +159,43 @@ public struct UpstreamLauncherEntry: Codable, Identifiable, Hashable {
         self.healthProbe = healthProbe
         self.probeIntervalSeconds = probeIntervalSeconds
         self.startTimeoutSeconds = startTimeoutSeconds
+        self.externalPolicy = externalPolicy
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, enabled, startCommand, stopCommand
+        case healthProbe, probeIntervalSeconds, startTimeoutSeconds
+        case externalPolicy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.enabled = try c.decode(Bool.self, forKey: .enabled)
+        self.startCommand = try c.decode(String.self, forKey: .startCommand)
+        self.stopCommand = try c.decodeIfPresent(String.self, forKey: .stopCommand)
+        self.healthProbe = try c.decode(HealthProbe.self, forKey: .healthProbe)
+        self.probeIntervalSeconds = try c.decode(Int.self, forKey: .probeIntervalSeconds)
+        self.startTimeoutSeconds = try c.decode(Int.self, forKey: .startTimeoutSeconds)
+        // Backward-compat: pre-policy entries get .neverReclaim so existing
+        // workflows (Tart spawned externally, etc.) keep their legacy
+        // "Shunt doesn't touch what it didn't start" guarantee. New entries
+        // created via UI default to .ask.
+        self.externalPolicy = (try? c.decodeIfPresent(LauncherExternalPolicy.self, forKey: .externalPolicy)) ?? .neverReclaim
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(startCommand, forKey: .startCommand)
+        try c.encodeIfPresent(stopCommand, forKey: .stopCommand)
+        try c.encode(healthProbe, forKey: .healthProbe)
+        try c.encode(probeIntervalSeconds, forKey: .probeIntervalSeconds)
+        try c.encode(startTimeoutSeconds, forKey: .startTimeoutSeconds)
+        try c.encode(externalPolicy, forKey: .externalPolicy)
     }
 }
 

@@ -186,6 +186,29 @@ struct UpstreamLauncherSection: View {
 
             entryStatusPill(for: entry)
 
+            if shouldShowReclaim(for: entry) {
+                Button {
+                    reclaim(entry: entry)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.uturn.left.circle")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("RECLAIM")
+                            .font(.shuntMonoLabel)
+                            .kerning(0.6)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(theme.accent(for: scheme))
+                .background(theme.accent(for: scheme).opacity(0.12), in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(theme.accent(for: scheme).opacity(0.35), lineWidth: 0.5)
+                )
+                .help("Take ownership of this already-running instance for this session, so Shunt will run its stop command on Disable.")
+            }
+
             Menu {
                 Button("Edit…") {
                     editing = LauncherEntryEditorContext(stageID: stage.id, entry: entry)
@@ -325,6 +348,23 @@ struct UpstreamLauncherSection: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Color.secondary.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: - Reclaim
+
+    private func shouldShowReclaim(for entry: UpstreamLauncherEntry) -> Bool {
+        guard let progress = activity.entries[entry.id] else { return false }
+        guard case .running = progress.state else { return false }
+        guard !progress.ownedByUs else { return false }
+        // No point offering reclaim if there's nothing to stop.
+        return !(entry.stopCommand?.isEmpty ?? true)
+    }
+
+    private func reclaim(entry: UpstreamLauncherEntry) {
+        activity.markReclaimed(entryID: entry.id)
+        Task {
+            await AppServices.shared.launcherEngine.reclaim(entryID: entry.id)
+        }
     }
 
     // MARK: - Stage rename

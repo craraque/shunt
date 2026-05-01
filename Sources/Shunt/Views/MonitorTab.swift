@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MonitorTab: View {
-    @StateObject private var monitor = FlowMonitor()
+    @ObservedObject private var monitor = AppServices.shared.flowMonitor
     @State private var viewMode: ViewMode = .connections
     @State private var autoScroll = true   // events mode only
     @Environment(\.shuntTheme) private var theme
@@ -38,22 +38,27 @@ struct MonitorTab: View {
             case .events:      eventsList
             }
         }
+        // FlowMonitor is started by AppDelegate for the lifetime of the app
+        // (the menubar popover also reads it), so MonitorTab doesn't manage
+        // its own start/stop anymore.
         .onAppear { monitor.start() }
-        .onDisappear { monitor.stop() }
         .onReceive(clock) { now = $0 }
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Monitor")
-                .font(.shuntTitle1)
+                .font(.system(size: 26, weight: .semibold))
+                .tracking(-0.65)
+                .foregroundStyle(.white)
             Text(viewMode == .connections
                  ? "Live connections the extension is routing through the upstream. Newest activity floats to the top."
                  : "Raw event log — one row per claimed flow, in timeline order.")
-                .font(.shuntBody)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.62))
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 28)

@@ -7,77 +7,163 @@ struct UpstreamTab: View {
     @State private var portText: String = ""
     @State private var bindInterface: String = ""
     @State private var availableInterfaces: [String] = []
+    @State private var authEnabled: Bool = false
+    @State private var username: String = ""
+    @State private var password: String = ""
+    @State private var useRemoteDNS: Bool = true
+    @State private var applyStatus: ApplyStatus = .idle
+    @State private var applyResetTask: Task<Void, Never>?
     @Environment(\.shuntTheme) private var theme
     @Environment(\.colorScheme) private var scheme
 
+    private enum ApplyStatus: Equatable {
+        case idle
+        case applying
+        case ok
+        case error(String)
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                Text("Upstream")
-                    .font(.shuntTitle1)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(
-                        label: "SOCKS5 endpoint",
-                        icon: "arrow.up.right",
-                        tooltip: "Where claimed traffic is forwarded — typically a SOCKS5 proxy running inside a VM with the corporate VPN."
-                    )
-                    VStack(spacing: 0) {
-                        FormRow("Host") {
-                            TextField("10.211.55.5", text: $host)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.shuntMonoData)
-                                .frame(width: 260)
-                        }
-                        Divider()
-                        FormRow("Port") {
-                            TextField("1080", text: $portText)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.shuntMonoData)
-                                .frame(width: 120)
-                        }
-                    }
-                    .padding(.horizontal, 4)
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Upstream")
+                        .font(.system(size: 26, weight: .semibold))
+                        .tracking(-0.65)
+                        .foregroundStyle(.white)
+                    Text("The local SOCKS5 proxy claimed traffic is forwarded into.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.62))
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionHeader(
-                        label: "Interface binding",
-                        icon: "cable.connector",
-                        tooltip: "Force the extension to dial the upstream out a specific NIC. Needed only when the upstream lives on a virtual bridge (e.g. bridge100 for Parallels) that isn't reachable via the default route."
-                    )
+                LiquidSectionLabel(text: "SOCKS5 endpoint", theme: theme)
+                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
                     VStack(spacing: 0) {
-                        FormRow("Bind to") {
+                        liquidRow(label: "Host") {
+                            AnyView(
+                                TextField("10.211.55.5", text: $host)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12.5, design: .monospaced))
+                                    .monospacedDigit()
+                                    .frame(width: 260)
+                            )
+                        }
+                        rowDivider
+                        liquidRow(label: "Port") {
+                            AnyView(
+                                TextField("1080", text: $portText)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12.5, design: .monospaced))
+                                    .monospacedDigit()
+                                    .frame(width: 120)
+                            )
+                        }
+                    }
+                }
+
+                LiquidSectionLabel(text: "Interface binding", theme: theme)
+                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
+                    liquidRow(label: "Bind to") {
+                        AnyView(
                             Picker("", selection: $bindInterface) {
                                 Text("None (use routing table)").tag("")
                                 ForEach(availableInterfaces, id: \.self) { name in
-                                    Text(name).tag(name).font(.shuntMonoData)
+                                    Text(name).tag(name).font(.system(size: 12.5, design: .monospaced))
                                 }
                             }
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .frame(width: 260, alignment: .leading)
-                            .font(.shuntMonoData)
-                        }
+                        )
                     }
-                    .padding(.horizontal, 4)
-
-                    Text("Select an interface only when the upstream is unreachable via the primary NIC — e.g. a Parallels shared network on `bridge100`.")
-                        .font(.shuntCaption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 4)
                 }
 
+                Text("Select an interface only when the upstream is unreachable via the primary NIC — e.g. a Parallels shared network on `bridge100`.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                LiquidSectionLabel(text: "DNS resolution", theme: theme)
+                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
+                    liquidRow(label: "Resolve via upstream") {
+                        AnyView(
+                            Toggle("", isOn: $useRemoteDNS)
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                                .tint(theme.accentDark)
+                        )
+                    }
+                }
+                Text("When ON, hostnames are forwarded in the SOCKS5 CONNECT (ATYP=0x03) so the upstream resolves them — recommended for hostname-based policies (Zscaler URL filtering, SNI matching) and to avoid leaking routed queries to your local DNS. Falls back to IP literal when the destination has no FQDN. Turn OFF only if your upstream rejects domain-name CONNECT.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                LiquidSectionLabel(text: "Authentication", theme: theme)
+                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
+                    VStack(spacing: 0) {
+                        liquidRow(label: "Required") {
+                            AnyView(
+                                Toggle("", isOn: $authEnabled)
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                    .tint(theme.accentDark)
+                            )
+                        }
+                        if authEnabled {
+                            rowDivider
+                            liquidRow(label: "Username") {
+                                AnyView(
+                                    TextField("user", text: $username)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 12.5, design: .monospaced))
+                                        .frame(width: 220)
+                                )
+                            }
+                            rowDivider
+                            liquidRow(label: "Password") {
+                                AnyView(
+                                    SecureField("••••••••", text: $password)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 12.5, design: .monospaced))
+                                        .frame(width: 220)
+                                )
+                            }
+                        }
+                    }
+                }
+                Text("Most upstreams (3proxy, microsocks default) accept anonymous connections — leave OFF. Turn ON only if your SOCKS5 server requires user/pass per RFC 1929.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 HStack(spacing: 8) {
-                    Button("Apply") { apply() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(theme.accent(for: scheme))
-                        .keyboardShortcut(.defaultAction)
+                    Button {
+                        apply()
+                    } label: {
+                        applyButtonLabel
+                            .frame(minWidth: 110)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(applyButtonTint)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(applyStatus == .applying)
+                    .animation(.easeInOut(duration: 0.18), value: applyStatus)
 
                     Button("Test Connection") {
                         apply()
                         model.testConnection()
+                    }
+                    if case .error(let msg) = applyStatus {
+                        Text(msg)
+                            .font(.shuntCaption)
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(msg)
                     }
                     Spacer()
                 }
@@ -110,18 +196,106 @@ struct UpstreamTab: View {
             host = model.settings.upstream.host
             portText = String(model.settings.upstream.port)
             bindInterface = model.settings.upstream.bindInterface ?? ""
+            username = model.settings.upstream.username
+            password = model.settings.upstream.password
+            authEnabled = !username.isEmpty || !password.isEmpty
+            useRemoteDNS = model.settings.upstream.useRemoteDNS
             refreshInterfaces()
         }
+    }
+
+    // MARK: - Helpers
+
+    private var rowDivider: some View {
+        Rectangle()
+            .fill(theme.edge)
+            .frame(height: 0.5)
+    }
+
+    private func liquidRow<Content: View>(label: String, @ViewBuilder content: @escaping () -> Content) -> some View {
+        HStack(spacing: 16) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.62))
+                .frame(width: 150, alignment: .leading)
+            content()
+            Spacer()
+        }
+        .padding(.vertical, 10)
     }
 
     private func apply() {
         let port = UInt16(portText) ?? model.settings.upstream.port
         portText = String(port)
+        let user = authEnabled ? username.trimmingCharacters(in: .whitespaces) : ""
+        let pass = authEnabled ? password : ""
         model.updateUpstream(
             host: host.trimmingCharacters(in: .whitespaces),
             port: port,
-            bindInterface: bindInterface.isEmpty ? nil : bindInterface
+            bindInterface: bindInterface.isEmpty ? nil : bindInterface,
+            username: user,
+            password: pass,
+            useRemoteDNS: useRemoteDNS
         )
+        applyResetTask?.cancel()
+        applyStatus = .applying
+        let startedAt = Date()
+        AppServices.shared.proxyManager.applyRulesLive { result in
+            // Hold "Applying…" for at least 600ms so the spinner is visible
+            // even when the IPC roundtrip is sub-millisecond.
+            let elapsed = Date().timeIntervalSince(startedAt)
+            let delay = max(0, 0.6 - elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                switch result {
+                case .success:
+                    applyStatus = .ok
+                case .failure(let error):
+                    applyStatus = .error(error.localizedDescription)
+                }
+                applyResetTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if !Task.isCancelled { applyStatus = .idle }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var applyButtonLabel: some View {
+        switch applyStatus {
+        case .idle:
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle")
+                Text("Apply")
+            }
+        case .applying:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                    .colorInvert().brightness(1)
+                Text("Applying…")
+            }
+        case .ok:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Applied")
+            }
+        case .error:
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Failed")
+            }
+        }
+    }
+
+    private var applyButtonTint: Color {
+        switch applyStatus {
+        case .idle, .applying:
+            return theme.accent(for: scheme)
+        case .ok:
+            return theme.statusActive(for: scheme)
+        case .error:
+            return .orange
+        }
     }
 
     private func refreshInterfaces() {

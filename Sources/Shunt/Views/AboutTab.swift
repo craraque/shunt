@@ -2,173 +2,200 @@ import SwiftUI
 
 struct AboutTab: View {
     @Environment(\.shuntTheme) private var theme
-    @Environment(\.colorScheme) private var scheme
+    @StateObject private var checker = UpdateChecker.shared
+    @StateObject private var installer = UpdateInstaller.shared
+    @State private var showingError: String?
 
     var body: some View {
         ZStack {
-            BlueprintGrid()
-            VStack(spacing: 14) {
-                Spacer().frame(height: 16)
-                TurnoutMark(
-                    size: 112,
-                    accent: theme.accent(for: scheme),
-                    statusActive: theme.statusActive(for: scheme),
-                    routing: true
-                )
-                Text("Shunt")
-                    .font(.shuntDisplay)
-                Text("Version \(appVersion) · build \(appBuild)")
-                    .font(.shuntMonoData)
-                    .foregroundStyle(.secondary)
-                Text("Per-app network routing for macOS. Send traffic from selected apps through a configurable SOCKS5 upstream — leave everything else on your normal network.")
-                    .font(.shuntCaption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 360)
-                    .padding(.top, 6)
-                Spacer()
-                Text("MADE BY CESAR ARAQUE")
-                    .font(.shuntMonoLabel)
-                    .kerning(1.5)
-                    .foregroundStyle(.tertiary)
-                    .padding(.bottom, 24)
+            LiquidCard(
+                theme: theme,
+                cornerRadius: 18,
+                padding: EdgeInsets(top: 24, leading: 24, bottom: 24, trailing: 24),
+                strong: true
+            ) {
+                ZStack {
+                    AccentBloom(theme: theme, diameter: 360, opacity: 0.18)
+                        .offset(y: -40)
+
+                    VStack(spacing: 14) {
+                        Spacer(minLength: 0)
+
+                        ShuntLogo(size: 108, theme: theme)
+
+                        Text("shunt")
+                            .font(.system(size: 32, weight: .medium, design: .default))
+                            .tracking(-0.96)
+                            .foregroundStyle(.white)
+                            .padding(.top, 4)
+
+                        LiquidPill(
+                            text: "Version \(Self.appVersion) · build \(Self.appBuild)",
+                            kind: .neutral,
+                            theme: theme
+                        )
+
+                        Text("Per-app network routing for macOS. Send traffic from selected apps through a configurable SOCKS5 upstream — leave everything else on your normal network.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(2)
+                            .padding(.top, 4)
+                            .frame(maxWidth: 420)
+
+                        updaterSection
+                            .padding(.top, 8)
+                            .frame(maxWidth: 480)
+
+                        HStack(spacing: 8) {
+                            Button("Release notes") {
+                                NSWorkspace.shared.open(URL(string: "https://github.com/craraque/shunt/releases")!)
+                            }
+                            .buttonStyle(.bordered)
+                            Button("Acknowledgements") {
+                                NSWorkspace.shared.open(URL(string: "https://github.com/craraque/shunt/blob/main/THIRD_PARTY.md")!)
+                            }
+                            .buttonStyle(.bordered)
+                            updaterPrimaryButton
+                        }
+                        .padding(.top, 12)
+
+                        Spacer(minLength: 0)
+
+                        Text("MADE BY CESAR ARAQUE")
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .tracking(1.5)
+                            .foregroundStyle(.white.opacity(0.36))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .padding(28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var appVersion: String {
+    // MARK: - Updater UI
+
+    @ViewBuilder
+    private var updaterSection: some View {
+        switch (checker.lastOutcome, installer.phase) {
+        case (_, .downloading(let p)):
+            updaterStatusRow(
+                icon: "arrow.down.circle",
+                text: String(format: "Downloading update… %d%%", Int(p * 100))
+            )
+        case (_, .verifying):
+            updaterStatusRow(icon: "checkmark.shield", text: "Verifying signature…")
+        case (_, .installing):
+            updaterStatusRow(icon: "tray.and.arrow.down", text: "Installing update…")
+        case (_, .relaunching):
+            updaterStatusRow(icon: "arrow.up.right.square", text: "Relaunching Shunt…")
+        case (_, .failed(let msg)):
+            updaterStatusRow(icon: "exclamationmark.triangle.fill",
+                             text: msg, color: .orange)
+        case (.failed(let reason)?, _):
+            updaterStatusRow(icon: "exclamationmark.triangle",
+                             text: reason, color: .orange)
+        case (.upToDate(let v)?, _):
+            updaterStatusRow(icon: "checkmark.circle.fill",
+                             text: "You're on the latest release (v\(v)).",
+                             color: theme.statusActive(for: .dark))
+        case (.available(let release)?, _):
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(theme.accentDark)
+                    Text("Update available — Shunt \(release.version)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white)
+                    Spacer()
+                }
+                if !release.notes.isEmpty {
+                    ScrollView {
+                        Text(release.notes)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 90)
+                }
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.glass)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(theme.edge, lineWidth: 0.5)
+            )
+        case (nil, .idle):
+            EmptyView()
+        }
+    }
+
+    private func updaterStatusRow(icon: String, text: String, color: Color = .white.opacity(0.7)) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(color)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var updaterPrimaryButton: some View {
+        switch (checker.lastOutcome, installer.phase) {
+        case (.available(let release)?, .idle):
+            Button {
+                Task { await installer.install(release: release) }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down.app")
+                    Text("Install update")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(theme.accentDark)
+        case (_, .downloading), (_, .verifying), (_, .installing), (_, .relaunching):
+            Button {} label: {
+                HStack(spacing: 4) {
+                    ProgressView().controlSize(.small)
+                    Text("Updating…")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(theme.accentDark)
+            .disabled(true)
+        default:
+            Button {
+                Task { _ = await checker.checkNow() }
+            } label: {
+                HStack(spacing: 4) {
+                    if checker.inFlight {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    Text(checker.inFlight ? "Checking…" : "Check for updates")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(theme.accentDark)
+            .disabled(checker.inFlight)
+        }
+    }
+
+    private static var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
     }
-    private var appBuild: String {
+    private static var appBuild: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
-    }
-}
-
-/// Subtle blueprint-style grid background. Used only on the About tab — the
-/// one place decoration is allowed in the design system.
-private struct BlueprintGrid: View {
-    var body: some View {
-        Canvas { context, size in
-            let spacing: CGFloat = 24
-            let stroke = GraphicsContext.Shading.color(Color(nsColor: .separatorColor).opacity(0.6))
-            var x: CGFloat = 0
-            while x <= size.width {
-                var p = Path()
-                p.move(to: CGPoint(x: x, y: 0))
-                p.addLine(to: CGPoint(x: x, y: size.height))
-                context.stroke(p, with: stroke, lineWidth: 0.5)
-                x += spacing
-            }
-            var y: CGFloat = 0
-            while y <= size.height {
-                var p = Path()
-                p.move(to: CGPoint(x: 0, y: y))
-                p.addLine(to: CGPoint(x: size.width, y: y))
-                context.stroke(p, with: stroke, lineWidth: 0.5)
-                y += spacing
-            }
-        }
-    }
-}
-
-/// Renders the Turnout mark at any size. Uses the 18-unit canvas geometry
-/// from MenubarIcons but scaled up, with theme colors. The routing parameter
-/// toggles between the idle and active rendering so the About tab can show
-/// the live state.
-struct TurnoutMark: View {
-    let size: CGFloat
-    let accent: Color
-    let statusActive: Color
-    let routing: Bool
-
-    init(size: CGFloat,
-         accent: Color = Color(hex: 0xC2410C),
-         statusActive: Color = Color(hex: 0x15803D),
-         routing: Bool = true) {
-        self.size = size
-        self.accent = accent
-        self.statusActive = statusActive
-        self.routing = routing
-    }
-
-    var body: some View {
-        Canvas { [accent, statusActive, routing] ctx, canvasSize in
-            // Scale 18-unit canvas up to target size
-            let s = canvasSize.width / 18.0
-            ctx.scaleBy(x: s, y: s)
-
-            // Sub-linear stroke scaling so 100pt doesn't look clubbed.
-            let railStroke: CGFloat = {
-                if canvasSize.width <= 24 { return 2.6 }
-                if canvasSize.width <= 64 { return 2.4 }
-                return 2.2
-            }()
-            let diagStroke: CGFloat = railStroke - 0.4
-
-            let recede = Color.primary.opacity(0.35)
-
-            // Top rail (main line) — recedes in active state
-            var topRail = Path()
-            topRail.move(to: CGPoint(x: 2, y: 6))
-            topRail.addLine(to: CGPoint(x: 16, y: 6))
-            ctx.stroke(topRail,
-                       with: .color(routing ? recede : .primary),
-                       style: StrokeStyle(lineWidth: railStroke, lineCap: .round))
-
-            // Bottom rail (diverted line) — active in routing state
-            var bottomRail = Path()
-            bottomRail.move(to: CGPoint(x: 2, y: 12))
-            bottomRail.addLine(to: CGPoint(x: 16, y: 12))
-            ctx.stroke(bottomRail,
-                       with: .color(routing ? accent : .primary),
-                       style: StrokeStyle(lineWidth: railStroke, lineCap: .round))
-
-            // Switch diagonal connecting the two rails
-            var diagonal = Path()
-            diagonal.move(to: CGPoint(x: 8, y: 6))
-            diagonal.addLine(to: CGPoint(x: 11, y: 12))
-            ctx.stroke(diagonal,
-                       with: .color(routing ? accent : .primary),
-                       style: StrokeStyle(lineWidth: diagStroke, lineCap: .round))
-
-            // Switch-point dot at the diagonal's midpoint
-            let dotR: CGFloat = 2.0
-            let switchRect = CGRect(
-                x: 9.5 - dotR, y: 9 - dotR,
-                width: dotR * 2, height: dotR * 2
-            )
-            ctx.fill(Path(ellipseIn: switchRect),
-                     with: .color(routing ? accent : .primary))
-
-            // Active-state terminus cap at the right end of the bottom rail
-            if routing {
-                let capR: CGFloat = 1.8
-                let capRect = CGRect(
-                    x: 16 - capR, y: 12 - capR,
-                    width: capR * 2, height: capR * 2
-                )
-                ctx.fill(Path(ellipseIn: capRect),
-                         with: .color(statusActive))
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-/// Legacy — kept as an alias so any external reference still compiles. The
-/// new name is `TurnoutMark`. This wraps it with the default accent so the
-/// v0.2.0 signature (no theme colors) keeps working.
-struct AppIconMark: View {
-    let size: CGFloat
-    let accent: Color
-
-    init(size: CGFloat, accent: Color = Color(hex: 0xC2410C)) {
-        self.size = size
-        self.accent = accent
-    }
-
-    var body: some View {
-        TurnoutMark(size: size, accent: accent, routing: true)
     }
 }

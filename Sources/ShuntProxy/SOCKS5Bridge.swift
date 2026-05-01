@@ -8,6 +8,8 @@ final class SOCKS5Bridge {
     private let socksHost: String
     private let socksPort: UInt16
     private let bindInterface: String?
+    private let username: String
+    private let password: String
     private let remoteHost: String
     private let remotePort: UInt16
     private let logger: Logger
@@ -16,11 +18,17 @@ final class SOCKS5Bridge {
     var onFinish: (() -> Void)?
     private var didFinish = false
 
+    private var hasAuth: Bool {
+        !username.isEmpty && !password.isEmpty
+    }
+
     init(
         flow: NEAppProxyTCPFlow,
         socksHost: String,
         socksPort: UInt16,
         bindInterface: String?,
+        username: String = "",
+        password: String = "",
         remoteHost: String,
         remotePort: UInt16,
         logger: Logger
@@ -29,6 +37,8 @@ final class SOCKS5Bridge {
         self.socksHost = socksHost
         self.socksPort = socksPort
         self.bindInterface = bindInterface
+        self.username = username
+        self.password = password
         self.remoteHost = remoteHost
         self.remotePort = remotePort
         self.logger = logger
@@ -69,7 +79,11 @@ final class SOCKS5Bridge {
     }
 
     private func sendGreeting() {
-        let greeting = Data([0x05, 0x01, 0x00])
+        // Advertise no-auth + user/pass when we have credentials, else
+        // just no-auth. Server picks one method via the reply byte.
+        let greeting: Data = hasAuth
+            ? Data([0x05, 0x02, 0x00, 0x02])    // VER, NMETHODS=2, methods: 00 + 02
+            : Data([0x05, 0x01, 0x00])           // VER, NMETHODS=1, method: 00
         socket.write(greeting) { [weak self] error in
             guard let self else { return }
             if let error {
@@ -89,8 +103,71 @@ final class SOCKS5Bridge {
                 self.closeAll()
                 return
             }
-            guard let data, data.count == 2, data[0] == 0x05, data[1] == 0x00 else {
-                self.logger.error("greeting rejected")
+            guard let data, data.count == 2, data[0] == 0x05 else {
+                self.logger.error("greeting rejected (bad version)")
+                self.closeAll()
+                return
+            }
+            switch data[1] {
+            case 0x00:
+                // No-auth — proceed straight to CONNECT.
+                self.sendConnect()
+            case 0x02:
+                // User/pass — RFC 1929 subnegotiation.
+                guard self.hasAuth else {
+                    self.logger.error("server requires user/pass but no credentials set")
+                    self.closeAll()
+                    return
+                }
+                self.sendUserPassAuth()
+            case 0xFF:
+                self.logger.error("server rejected all methods (no acceptable auth)")
+                self.closeAll()
+            default:
+                self.logger.error("server picked unsupported method 0x\(String(format: "%02X", data[1]))")
+                self.closeAll()
+            }
+        }
+    }
+
+    /// RFC 1929 user/pass subnegotiation:
+    ///   Request:  01 ULEN UNAME PLEN PASSWD
+    ///   Response: 01 STATUS    (00 = ok)
+    private func sendUserPassAuth() {
+        let userBytes = Array(username.utf8)
+        let passBytes = Array(password.utf8)
+        guard userBytes.count <= 255, passBytes.count <= 255 else {
+            logger.error("user/pass too long for SOCKS5 auth")
+            closeAll()
+            return
+        }
+        var packet = Data()
+        packet.append(0x01)                          // subnegotiation version
+        packet.append(UInt8(userBytes.count))
+        packet.append(contentsOf: userBytes)
+        packet.append(UInt8(passBytes.count))
+        packet.append(contentsOf: passBytes)
+        socket.write(packet) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                self.logger.error("auth write: \(error.localizedDescription, privacy: .public)")
+                self.closeAll()
+                return
+            }
+            self.recvUserPassReply()
+        }
+    }
+
+    private func recvUserPassReply() {
+        socket.read(minimum: 2, maximum: 2) { [weak self] data, error in
+            guard let self else { return }
+            if let error {
+                self.logger.error("auth read: \(error.localizedDescription, privacy: .public)")
+                self.closeAll()
+                return
+            }
+            guard let data, data.count == 2, data[0] == 0x01, data[1] == 0x00 else {
+                self.logger.error("auth rejected by upstream (status=0x\(String(format: "%02X", data?.last ?? 0xFF)))")
                 self.closeAll()
                 return
             }

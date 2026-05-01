@@ -159,6 +159,158 @@ final class ProxyManager {
         }
     }
 
+    /// Push the current on-disk settings (rules + upstream) into the running
+    /// provider via NETunnelProviderSession IPC. Does NOT cycle the tunnel
+    /// and does NOT touch the upstream launcher, so Tart / sshuttle / any
+    /// other dependency keeps running. The on-disk providerConfiguration is
+    /// also refreshed so a future cold-start has the latest rules.
+    ///
+    /// Call from the Apply button on the Rules tab. Safe to call when the
+    /// tunnel is idle — the IPC leg is skipped and only the persistent
+    /// config is updated.
+    func applyRulesLive(completion: @escaping (Result<Void, Swift.Error>) -> Void = { _ in }) {
+        let settings = settingsStore.load()
+        NETransparentProxyManager.loadAllFromPreferences { managers, error in
+            if let error {
+                Log.error("applyRulesLive loadAll failed: \(error.localizedDescription)")
+                completion(.failure(error))
+                return
+            }
+            guard let manager = managers?.first else {
+                Log.info("applyRulesLive: no manager configured — nothing to update")
+                completion(.failure(NSError(
+                    domain: "Shunt.ProxyManager",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Proxy is not configured"]
+                )))
+                return
+            }
+
+            let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+            proto.providerBundleIdentifier = Self.providerBundleIdentifier
+            proto.serverAddress = Self.displayName
+            do {
+                proto.providerConfiguration = try SettingsStore.encodeForProvider(settings)
+            } catch {
+                Log.error("applyRulesLive encode failed: \(error.localizedDescription)")
+                completion(.failure(error))
+                return
+            }
+            manager.protocolConfiguration = proto
+
+            manager.saveToPreferences { error in
+                if let error {
+                    let ns = error as NSError
+                    Log.error("applyRulesLive save failed: domain=\(ns.domain) code=\(ns.code) desc=\(ns.localizedDescription)")
+                    completion(.failure(error))
+                    return
+                }
+                manager.loadFromPreferences { _ in
+                    let status = manager.connection.status
+                    guard status == .connected || status == .reasserting else {
+                        Log.info("applyRulesLive: tunnel not active (status=\(status.rawValue)) — providerConfiguration persisted; provider will read on next start")
+                        completion(.success(()))
+                        return
+                    }
+                    guard let session = manager.connection as? NETunnelProviderSession else {
+                        Log.error("applyRulesLive: connection is not NETunnelProviderSession")
+                        completion(.failure(NSError(
+                            domain: "Shunt.ProxyManager",
+                            code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "Tunnel session unavailable"]
+                        )))
+                        return
+                    }
+                    do {
+                        let payload = try JSONEncoder().encode(settings)
+                        try session.sendProviderMessage(payload) { reply in
+                            let ack = reply.flatMap { String(data: $0, encoding: .utf8) } ?? "<no reply>"
+                            if ack.hasPrefix("ok") {
+                                Log.info("applyRulesLive: provider ack=\(ack)")
+                                completion(.success(()))
+                            } else {
+                                Log.error("applyRulesLive: provider replied \(ack)")
+                                completion(.failure(NSError(
+                                    domain: "Shunt.ProxyManager",
+                                    code: 3,
+                                    userInfo: [NSLocalizedDescriptionKey: ack]
+                                )))
+                            }
+                        }
+                    } catch {
+                        Log.error("applyRulesLive sendProviderMessage failed: \(error.localizedDescription)")
+                        completion(.failure(error))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Restart the NE tunnel to force the provider to re-read state from
+    /// scratch. Does NOT touch the upstream launcher — Tart / sshuttle /
+    /// etc. stay running. Active TCP flows through Shunt are dropped while
+    /// the tunnel cycles (typically 1-2 s).
+    ///
+    /// Call from the "Reload Tunnel" button on the General tab when Apply
+    /// is not enough (e.g. you need a fresh SOCKS bridge pool).
+    func reloadTunnel(completion: @escaping (Result<Void, Swift.Error>) -> Void = { _ in }) {
+        Log.info("ProxyManager.reloadTunnel")
+        NETransparentProxyManager.loadAllFromPreferences { managers, error in
+            if let error {
+                Log.error("reloadTunnel loadAll failed: \(error.localizedDescription)")
+                completion(.failure(error))
+                return
+            }
+            guard let manager = managers?.first else {
+                Log.info("reloadTunnel: no manager configured")
+                completion(.failure(NSError(
+                    domain: "Shunt.ProxyManager",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Proxy is not configured"]
+                )))
+                return
+            }
+
+            // Refresh providerConfiguration so the restarted tunnel picks up
+            // current settings — same as enableTunnel does.
+            let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+            proto.providerBundleIdentifier = Self.providerBundleIdentifier
+            proto.serverAddress = Self.displayName
+            let settings = self.settingsStore.load()
+            do {
+                proto.providerConfiguration = try SettingsStore.encodeForProvider(settings)
+            } catch {
+                Log.error("reloadTunnel encode failed: \(error.localizedDescription)")
+            }
+            manager.protocolConfiguration = proto
+            manager.isEnabled = true
+
+            manager.saveToPreferences { error in
+                if let error {
+                    Log.error("reloadTunnel save failed: \(error.localizedDescription)")
+                    completion(.failure(error))
+                    return
+                }
+                manager.loadFromPreferences { _ in
+                    let status = manager.connection.status
+                    let alreadyRunning = status != .disconnected && status != .invalid
+                    if alreadyRunning {
+                        Log.info("reloadTunnel: stopping (status=\(status.rawValue))")
+                        manager.connection.stopVPNTunnel()
+                        self.waitForDisconnected(manager) {
+                            Self.startTunnel(manager)
+                            completion(.success(()))
+                        }
+                    } else {
+                        Log.info("reloadTunnel: tunnel not running — starting")
+                        Self.startTunnel(manager)
+                        completion(.success(()))
+                    }
+                }
+            }
+        }
+    }
+
     func disable() async {
         await MainActor.run { ProxyActivity.shared.begin() }
         defer {

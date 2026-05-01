@@ -46,6 +46,12 @@ final class FlowMonitor: ObservableObject {
     @Published private(set) var isStreaming = false
     @Published var lastError: String?
 
+    /// Cumulative session counters. The popover shows Routed / Direct tiles
+    /// to give a sense of how much traffic Shunt is actually claiming versus
+    /// passing through. Reset implicitly when the app restarts.
+    @Published private(set) var routedCount: Int = 0
+    @Published private(set) var directCount: Int = 0
+
     /// Connections sorted by last-seen descending. View layer reads this.
     var connectionsSorted: [ConnectionSummary] {
         connections.values.sorted { $0.lastSeen > $1.lastSeen }
@@ -55,13 +61,21 @@ final class FlowMonitor: ObservableObject {
     private var reader: Task<Void, Never>?
     private let maxEvents = 500
 
-    /// Predicate matches any CLAIM log line emitted by the provider subsystem.
+    /// Predicate matches CLAIM (routed) or SKIP (direct/passthrough) log
+    /// lines from the provider subsystem. Combined so we can derive a
+    /// Routed/Direct counter pair without two log streams.
     private static let predicate =
-        "subsystem == \"com.craraque.shunt.proxy\" AND eventMessage CONTAINS \"CLAIM\""
+        "subsystem == \"com.craraque.shunt.proxy\" " +
+        "AND (eventMessage CONTAINS \"CLAIM\" OR eventMessage CONTAINS \"SKIP\")"
 
     /// Regex matching `CLAIM <bundleID> → <host>:<port> (endpoint=<ip>)`.
     private static let claimRegex: NSRegularExpression? = try? NSRegularExpression(
         pattern: #"CLAIM\s+(\S+)\s+→\s+([^:\s]+):(\d+)\s+\(endpoint=([^)]+)\)"#
+    )
+
+    /// Regex matching `SKIP source=<bundleID> endpoint=<ip>:<port> — no rule matched`.
+    private static let skipRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"SKIP\s+source=(\S+)\s+endpoint=([^:\s]+):(\d+)"#
     )
 
     func start() {
@@ -95,9 +109,14 @@ final class FlowMonitor: ObservableObject {
             do {
                 for try await line in handle.bytes.lines {
                     if Task.isCancelled { break }
-                    guard let event = Self.parseEvent(line: line) else { continue }
-                    await MainActor.run {
-                        self?.append(event)
+                    let parsed = Self.parseLine(line)
+                    switch parsed {
+                    case .claim(let event):
+                        await MainActor.run { self?.append(event) }
+                    case .skip:
+                        await MainActor.run { self?.directCount &+= 1 }
+                    case .none:
+                        continue
                     }
                 }
             } catch {
@@ -128,6 +147,7 @@ final class FlowMonitor: ObservableObject {
             events.removeFirst(events.count - maxEvents)
         }
         upsertConnection(for: event)
+        routedCount &+= 1
     }
 
     private func upsertConnection(for event: FlowEvent) {
@@ -161,15 +181,28 @@ final class FlowMonitor: ObservableObject {
 
     // MARK: - Parsing
 
+    enum ParsedLine {
+        case claim(FlowEvent)
+        case skip
+        case none
+    }
+
     /// `nonisolated` so the detached reader task can parse off-main without
     /// bouncing every line through the main actor.
-    private nonisolated static func parseEvent(line: String) -> FlowEvent? {
+    private nonisolated static func parseLine(_ line: String) -> ParsedLine {
         guard let data = line.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let message = json["eventMessage"] as? String
-        else { return nil }
+        else { return .none }
 
-        guard let regex = claimRegex else { return nil }
+        // Skip path: cheap regex first (most lines on a busy machine are SKIP).
+        if let skipRegex,
+           let _ = skipRegex.firstMatch(in: message,
+                                        range: NSRange(message.startIndex..., in: message)) {
+            return .skip
+        }
+
+        guard let regex = claimRegex else { return .none }
         let range = NSRange(message.startIndex..., in: message)
         guard let match = regex.firstMatch(in: message, range: range),
               match.numberOfRanges == 5,
@@ -178,18 +211,18 @@ final class FlowMonitor: ObservableObject {
               let pRange = Range(match.range(at: 3), in: message),
               let iRange = Range(match.range(at: 4), in: message),
               let port = Int(message[pRange])
-        else { return nil }
+        else { return .none }
 
         let timestamp = parseLogTimestamp(json["timestamp"] as? String) ?? Date()
 
-        return FlowEvent(
+        return .claim(FlowEvent(
             id: UUID(),
             timestamp: timestamp,
             bundleID: String(message[bRange]),
             host: String(message[hRange]),
             port: port,
             endpointIP: String(message[iRange])
-        )
+        ))
     }
 
     /// `log stream --style ndjson` emits timestamps as

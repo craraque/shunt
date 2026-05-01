@@ -280,10 +280,20 @@ final class SettingsViewModel: ObservableObject {
 
     // MARK: - Upstream
 
-    func updateUpstream(host: String, port: UInt16, bindInterface: String?) {
+    func updateUpstream(host: String,
+                        port: UInt16,
+                        bindInterface: String?,
+                        username: String = "",
+                        password: String = "",
+                        useRemoteDNS: Bool? = nil) {
         settings.upstream.host = host
         settings.upstream.port = port
         settings.upstream.bindInterface = (bindInterface?.isEmpty ?? true) ? nil : bindInterface
+        settings.upstream.username = username
+        settings.upstream.password = password
+        if let useRemoteDNS {
+            settings.upstream.useRemoteDNS = useRemoteDNS
+        }
         save()
     }
 

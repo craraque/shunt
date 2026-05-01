@@ -387,3 +387,81 @@ The Parallels-specific auto-start idea below is subsumed by Phase 3f. Keeping he
 - VM-down behavior (auto-start recommended)
 - Per-app bandwidth UI or ephemeral only
 - Remote DNS via SOCKS vs local DNS
+
+## Phase 6 — Toggle in-flight feedback + cancellation UX (planning, NOT for now)
+
+**Reported 2026-04-28.** When the user clicks Enable in the menubar popover with a launcher entry that takes seconds-to-tens-of-seconds to come up (Parallels/Tart resume, then Zscaler reauth, then probe pass), the toggle flips visually but offers zero feedback about what's happening. The header still says "Routing engine"; the toggle has no spinner; the user can re-click and trigger an unsafe mid-flight disable.
+
+### Goals
+
+1. Show *something is happening* in the same surface the user just clicked (popover header).
+2. Show *what specifically* is happening — which entry, which stage, what state.
+3. If the user clicks the toggle again mid-operation, surface a confirmation with a sensible default rather than silently issuing a competing command.
+
+### State the engine already exposes (we just don't render it)
+
+- `ProxyActivity.shared.busy` — `true` while launcher is running (start or stop) OR tunnel is in NEVPNStatus 2 (connecting), 4 (reasserting), 5 (disconnecting). Already published, already observed by `AppDelegate` for the menubar pulse.
+- `ProxyActivity.shared.entries[uuid]` — per-entry `EntryProgress { state, ownedByUs, detail, ... }`. Drives the "N/M ready" pill in the Upstream tab. State enum: `idle / starting / running / failed / stopping / stopped`.
+- `UpstreamLauncherEngine.inFlightStartTask` — `Task` handle for the active startAll. Already cancellable via `stopAll`, which cancels then runs teardown of stages we own.
+- `NEVPNStatus` from `proxyManager.statusRaw()` — separate signal layer, polled every 3s by `AppDelegate.refreshStatus`.
+
+### 6a. Toggle becomes a state-aware button (not just an `isOn` mirror)
+
+- [ ] **Replace the popover header `Toggle` with a custom morphing button** whose visual reads three states:
+  - `idle` (off): standard switch, off position, off-tint.
+  - `idle` (on): standard switch, on position, accent-tint, header subtitle "Live routing".
+  - `working`: switch knob replaced by a small `ProgressView`, base capsule pulses at the active accent. Subtitle shows the live status string (see 6b).
+- [ ] **Bind `working` to** `ProxyActivity.busy || statusRaw == 2 || statusRaw == 4 || statusRaw == 5`. Same predicate as the existing menubar pulse so the two indicators are coherent.
+- [ ] **Disable second-click of the toggle while in `working`** — but route the click to the cancel-confirmation flow (6c), not to a no-op.
+
+### 6b. Live status string in the popover subtitle
+
+Use the most-specific signal available. Priority, top-down:
+
+1. **Launcher running** → `"Starting <entryName>…"` (e.g. "Starting macOS guest (Zscaler)…"). Pulled from the latest `EntryProgress` whose state is `.starting`.
+2. **Launcher health-probing** → `"Waiting for <entryName>…"` once entry is `.starting` and probe attempts > 1. (Engine doesn't expose probe-attempt count today; either extend `Event.detail` to include it, or fold this into 1 with a 5 s threshold.)
+3. **Launcher tearing down** → `"Stopping <entryName>…"` for `.stopping`.
+4. **NE tunnel connecting** → `"Connecting tunnel…"` when `statusRaw == 2` and no launcher is in flight.
+5. **NE tunnel disconnecting** → `"Disconnecting tunnel…"` when `statusRaw == 5`.
+6. **NE tunnel reasserting** → `"Reconnecting tunnel…"` when `statusRaw == 4`.
+7. Default (idle): existing strings (`"Live routing"` or `"Routing engine"`).
+
+- [ ] Add `MenubarPopoverModel.workingDescription: String?` populated by `AppDelegate.refreshStatus()` from `ProxyActivity.shared.entries` + `statusRaw`.
+- [ ] Render in the existing subtitle slot when non-nil; fall back to `model.isRouting ? "Live routing" : "Routing engine"` otherwise.
+
+### 6c. Cancel-confirmation when user re-clicks during work
+
+When the user clicks the toggle while `ProxyActivity.busy == true`, present a modal alert with three options:
+
+- [ ] **NSAlert "Shunt is bringing the tunnel up"** with the live status as informative text:
+  - **Cancel and tear down** (destructive style): calls `proxyManager.disable()` immediately. The launcher's `stopAll` cancels `inFlightStartTask`, kills any spawned PIDs we own, and runs `stopCommand` for entries the user authored one for. Tunnel never reaches `connected`.
+  - **Wait for it to finish, then disable** (default): set a `MainQueue` flag `pendingDisableAfterEnable = true`. AppDelegate observes `statusRaw` transitions and, on the first time it sees `connected`, fires a delayed `proxyManager.disable()`. Surface a small "queued disable" indicator in the header so the user knows.
+  - **Keep enabling** (safe cancel): dismiss alert, no-op.
+- [ ] Mirror the same logic in reverse for **Disable mid-flight**: if the user clicks toggle ON while `statusRaw == 5` or stopAll is in flight, offer "Cancel disable / Wait then re-enable / Keep disabling".
+
+Implementation notes:
+- The alert lives in `AppDelegate` (already where similar prompts live, e.g. the new external-reclaim ask-prompt).
+- `pendingDisableAfterEnable` is in-memory state on AppDelegate; lost on app quit. That's fine — the user is right there.
+- The "Wait for it to finish" path needs a watchdog: if status stays in `.connecting` past 60 s, abandon the queued disable and surface a failure toast (don't leave the user wondering forever).
+
+### 6d. Engine work to expose better signals
+
+Optional, only if 6b's "5 s threshold" feels lazy:
+
+- [ ] Extend `UpstreamLauncherEngine.Event.detail` (or add a new `Event.kind` enum value) so probe attempts publish a structured `attempt: Int, deadline: Date` instead of a free-form string. Lets the UI render an accurate ETA / progress bar without parsing text.
+- [ ] Surface `inFlightStartTask` state via a public `engine.inFlight: Bool` so the UI doesn't have to derive it from `ProxyActivity.busy` (the two are equivalent today; making it explicit helps when adding more orchestration).
+
+### Risks / gotchas
+
+- **Quick double-click race.** Today, double-clicking the toggle within ~150 ms enqueues two NE state changes. The state-aware button must debounce *visually* on the first click (immediate spinner) but *functionally* still serialize on the actor — both `proxyManager.enable()` and `disable()` already serialize via NEVPNManager's KVO, but the user should never see two competing prompts.
+- **Sysext not yet activated.** When `model.extensionInstalled == false`, today the toggle is `.disabled(true)`. Keep this exact behavior — the working-state UI only kicks in once the sysext exists. (Activation has its own tab flow.)
+- **VPN reauth window with autorenewal.** If the user toggles ON and Zscaler is mid-reauth in the VM, the egress probe can pass *intermittently*. Don't flap the working indicator — once `.starting` for an entry, hold the indicator until either `.running` or `.failed`. Probe re-tries don't change the visible state.
+- **Ergonomics of the alert.** Three buttons is the upper limit; don't add a fourth. If we ever add "queue cancel, but also reset launcher to idle" or similar, fold it into a kebab menu next to the alert.
+
+### Effort estimate
+
+- 6a + 6b: ~150 LOC, 1 popover file change + small `MenubarPopoverModel` additions. ~1.5 h.
+- 6c: ~80 LOC in `AppDelegate` + 1 alert, ~1 h.
+- 6d: ~30 LOC, optional, ~30 min.
+
+Total: 2.5–3 h, no sysext cycle (UI only — main app rebuild only).

@@ -64,6 +64,31 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         completionHandler()
     }
 
+    // Live rule/upstream update without cycling the tunnel. The containing
+    // app sends the full encoded ShuntSettings JSON here; we swap the
+    // in-memory snapshot so flows already in flight continue on the old
+    // bridges while new flows match against the updated rules. NE serializes
+    // provider callbacks on one queue, so no lock is needed.
+    override func handleAppMessage(
+        _ messageData: Data,
+        completionHandler: ((Data?) -> Void)? = nil
+    ) {
+        do {
+            let newSettings = try JSONDecoder().decode(ShuntSettings.self, from: messageData)
+            let newRules = newSettings.rules.filter { $0.enabled && $0.isValid }
+            activeRules = newRules
+            upstream = newSettings.upstream
+            let summary = newRules
+                .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
+                .joined(separator: "; ")
+            logger.info("applyRulesLive; rules=\(summary, privacy: .public) upstream=\(self.upstream.host, privacy: .public):\(self.upstream.port, privacy: .public)")
+            completionHandler?(Data("ok".utf8))
+        } catch {
+            logger.error("applyRulesLive decode failed: \(error.localizedDescription, privacy: .public)")
+            completionHandler?(Data("err:\(error.localizedDescription)".utf8))
+        }
+    }
+
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
         let source = flow.metaData.sourceAppSigningIdentifier
 
@@ -131,10 +156,19 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
             return false
         }
 
-        // Prefer the pre-resolution hostname over the already-resolved IP when
-        // we hand off to SOCKS5 (ATYP 0x03) so the upstream proxy (Zscaler,
-        // 3proxy, etc.) can apply hostname-based policy.
-        let targetHost: String = (!preResolved.isEmpty) ? preResolved : endpointHost
+        // DNS-resolution policy: when `upstream.useRemoteDNS` is on (default),
+        // hand the pre-resolution hostname to SOCKS5 (ATYP 0x03) so the
+        // upstream proxy applies hostname-based policy and we don't leak the
+        // routed query to the host's local resolver. When OFF, always send
+        // the OS-resolved IP literal (ATYP 0x01/0x04) — useful when the
+        // upstream rejects domain-name CONNECT, or for debugging IP-based
+        // rules.
+        let targetHost: String
+        if upstream.useRemoteDNS && !preResolved.isEmpty && !HostMatcher.isIPLiteral(preResolved) {
+            targetHost = preResolved
+        } else {
+            targetHost = endpointHost
+        }
 
         logger.info("CLAIM \(source, privacy: .public) → \(targetHost, privacy: .public):\(port, privacy: .public) (endpoint=\(endpointHost, privacy: .public))")
         let bridge = SOCKS5Bridge(
@@ -142,6 +176,8 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
             socksHost: upstream.host,
             socksPort: upstream.port,
             bindInterface: upstream.bindInterface,
+            username: upstream.username,
+            password: upstream.password,
             remoteHost: targetHost,
             remotePort: port,
             logger: logger

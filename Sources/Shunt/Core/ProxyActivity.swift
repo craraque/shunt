@@ -99,6 +99,17 @@ final class ProxyActivity: ObservableObject {
         notify()
     }
 
+    /// Optimistic UI flip: mark an entry as `ownedByUs=true` immediately
+    /// after the user pressed "Reclaim", so the inline state pill stops
+    /// showing the "external" link badge. The engine has its own copy of
+    /// ownership; this just keeps the UI from lagging behind.
+    func markReclaimed(entryID: UUID) {
+        guard var progress = entries[entryID] else { return }
+        progress.ownedByUs = true
+        entries[entryID] = progress
+        notify()
+    }
+
     /// Posted on each state transition. AppDelegate subscribes here because
     /// it observes from AppKit code that can't easily participate in
     /// SwiftUI's @Published plumbing.

@@ -1,39 +1,32 @@
 import AppKit
 import SwiftUI
 
-// Shunt menubar mark — "Turnout (top-down)".
+// Shunt menubar mark — switch diagram silhouette (18×18 viewBox).
 //
-// A railway switch as seen from above: two parallel horizontal rails with a
-// diagonal connector and a switch-point dot at the midpoint. The silhouette
-// is identical in both states — what changes is the switch dot, which acts
-// as the **indicator LED**:
+// Geometry per design-handoff 2026-04-27:
+//   Top rail:    (2, 6) → (16, 6),   stroke 1.8, round caps
+//   Bottom rail: (2, 12) → (16, 12), stroke 1.8, round caps
+//   Switch link: quad (6, 6) ⌒ (9, 9) ⌒ (12, 12), stroke 1.8
 //
-// • **Idle**: full turnout in system label color (template image). The dot
-//   sits small and subdued — the switch is present but not firing.
+// Idle (template): all strokes at 70% currentColor — macOS handles
+// dark-mode inversion automatically because `isTemplate = true`.
 //
-// • **Routing**: same turnout; rails/diagonal stay monochrome; the dot
-//   grows and takes the theme accent color with a soft halo behind it. The
-//   switch is *lit*.
+// Active (non-template): all strokes full opacity in accent color,
+// plus filled signal-color circles (r=1.4) at the switch endpoints
+// (6,6) and (12,12).
 //
-// Keeping the silhouette constant and changing only one element ("the LED
-// comes on") is the standard menubar pattern for state signalling — far
-// less noisy than swapping the whole mark on every enable/disable.
+// Pending: same as routing, with a pulsing alpha on the LED dots so
+// the icon reads as "working" rather than fully "live".
 
 enum MenubarIcons {
 
-    /// 18×18pt monochrome template. Full turnout composition in system label
-    /// color; switch-point dot is small and unlit.
+    /// 18×18 template image. All strokes at 70% black; macOS inverts in
+    /// dark mode because `isTemplate = true`.
     static func idle() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            drawTurnout(
-                railColor: .black,
-                diagonalColor: .black,
-                switchDotColor: .black,
-                switchDotHalo: nil,
-                switchDotRadius: 1.7,
-                topRailAlpha: 1.0
-            )
+            drawSwitch(strokeColor: NSColor.black.withAlphaComponent(0.7),
+                       junctionColor: nil)
             return true
         }
         image.isTemplate = true
@@ -41,28 +34,12 @@ enum MenubarIcons {
         return image
     }
 
-    /// 18×18pt coloured. **Silhouette is identical to `idle()`** — the same
-    /// monochrome turnout — with one added element: a status LED in the
-    /// bottom-right corner, drawn in the theme's **`statusActive`** color
-    /// (the "live signal" hue — green in most themes, cyan in Chassis). The
-    /// LED is noticeably larger than the central switch-point dot. The base
-    /// icon is the app's identity; the LED is the state indicator.
+    /// 18×18 non-template image. Strokes resolved to current label color;
+    /// junction circles in `statusActive` (signal) color.
     static func routing(accent: NSColor, statusActive: NSColor) -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            // Base turnout in the resolved label color (non-template image
-            // can't auto-tint on appearance changes — we re-render on
-            // effectiveAppearance KVO in AppDelegate).
-            let rails = resolvedLabelColor()
-            drawTurnout(
-                railColor: rails,
-                diagonalColor: rails,
-                switchDotColor: rails,
-                switchDotHalo: nil,
-                switchDotRadius: 1.7,
-                topRailAlpha: 1.0
-            )
-            drawCornerLED(color: statusActive)
+            drawSwitch(strokeColor: accent, junctionColor: statusActive)
             return true
         }
         image.isTemplate = false
@@ -70,50 +47,35 @@ enum MenubarIcons {
         return image
     }
 
-    /// Convenience: render routing() using a ShuntTheme, resolving the
-    /// accent + statusActive variants against the current system
-    /// appearance. `AppDelegate` re-renders the icon when appearance flips
-    /// (KVO on `effectiveAppearance`).
+    /// Convenience: render routing() using a ShuntTheme. Re-rendered by
+    /// AppDelegate when system appearance flips.
     static func routing(theme: ShuntTheme) -> NSImage {
         let isDark = NSApp?.effectiveAppearance.bestMatch(
             from: [.darkAqua, .aqua]
         ) == .darkAqua
         let accent = isDark ? theme.accentDark : theme.accentLight
-        let live = isDark ? theme.statusActiveDark : theme.statusActiveLight
         return routing(
             accent: NSColor(accent),
-            statusActive: NSColor(live)
+            statusActive: NSColor(theme.signal)
         )
     }
 
-    /// "Pending / working" state. Same silhouette as idle, LED in the same
-    /// theme-`statusActive` colour as the routing state — the difference
-    /// between pending and routing is the **pulse**, not the hue. This
-    /// keeps every theme with its signature LED colour (cyan in Chassis,
-    /// green / teal / lime in the others) whether Shunt is working or
-    /// fully routing.
-    ///
-    /// `ledAlpha` lets the caller pulse the LED over time — `AppDelegate`
-    /// drives a sine-wave pulse while `ProxyActivity.shared.busy` so the
-    /// icon reads as "working" rather than just frozen.
+    /// Pulsing "working" state — same silhouette, junction LEDs at the
+    /// caller-provided alpha so AppDelegate can sine-wave-pulse them while
+    /// `ProxyActivity.shared.busy`.
     static func pending(theme: ShuntTheme, ledAlpha: CGFloat = 1.0) -> NSImage {
-        let isDark = NSApp?.effectiveAppearance.bestMatch(
-            from: [.darkAqua, .aqua]
-        ) == .darkAqua
-        let signal = isDark ? theme.statusActiveDark : theme.statusActiveLight
-
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            let rails = resolvedLabelColor()
-            drawTurnout(
-                railColor: rails,
-                diagonalColor: rails,
-                switchDotColor: rails,
-                switchDotHalo: nil,
-                switchDotRadius: 1.7,
-                topRailAlpha: 1.0
-            )
-            drawCornerLED(color: NSColor(signal).withAlphaComponent(ledAlpha))
+            // Strokes in resolved label color (non-template; we re-render on
+            // appearance flips via KVO in AppDelegate).
+            let isDark = NSApp?.effectiveAppearance.bestMatch(
+                from: [.darkAqua, .aqua]
+            ) == .darkAqua
+            let stroke = isDark
+                ? NSColor.white.withAlphaComponent(0.88)
+                : NSColor.black.withAlphaComponent(0.85)
+            let junction = NSColor(theme.signal).withAlphaComponent(ledAlpha)
+            drawSwitch(strokeColor: stroke, junctionColor: junction)
             return true
         }
         image.isTemplate = false
@@ -123,109 +85,62 @@ enum MenubarIcons {
 
     // MARK: - Drawing
 
-    /// Pick a rail color that reads against the menubar: near-black in light
-    /// appearance, near-white in dark. We can't use `NSColor.labelColor`
-    /// directly here because the routing image is non-template, so the
-    /// system won't re-tint it on appearance changes — we resolve concretely
-    /// at paint time. `AppDelegate` observes `effectiveAppearance` and
-    /// re-renders the icon when it flips.
-    private static func resolvedLabelColor() -> NSColor {
-        let isDark = NSApp?.effectiveAppearance.bestMatch(
-            from: [.darkAqua, .aqua]
-        ) == .darkAqua
-        return isDark
-            ? NSColor.white.withAlphaComponent(0.88)
-            : NSColor.black.withAlphaComponent(0.85)
-    }
-
-    /// Accent-coloured "status LED" dot in the bottom-right corner of the
-    /// 18-pt canvas. Drawn on top of the turnout in the routing state only.
-    /// Larger than the central switch-point dot (r=3.0 vs 1.7) so it reads
-    /// immediately as a separate indicator element.
-    private static func drawCornerLED(color: NSColor) {
-        color.setFill()
-        let r: CGFloat = 3.0
-        let centerX: CGFloat = 14.0
-        let centerY: CGFloat = 14.5     // visual (top-left) Y
-        let rect = NSRect(
-            x: centerX - r,
-            y: (18 - centerY) - r,
-            width: r * 2,
-            height: r * 2
-        )
-        NSBezierPath(ovalIn: rect).fill()
-    }
-
-    /// Draws the full top-down turnout: two horizontal rails, a diagonal
-    /// switch connector, and the switch-point dot (optionally with a halo
-    /// ring behind it). Coordinates are in 18-pt top-left-origin space;
-    /// Y is flipped here to AppKit's bottom-left origin.
-    ///
-    /// `topRailAlpha` lets the caller lift the top rail off the primary
-    /// hierarchy: full alpha reads as two equal tracks, lower alpha signals
-    /// "this is the unused/main route" while the bottom rail stays dominant.
-    private static func drawTurnout(
-        railColor: NSColor,
-        diagonalColor: NSColor,
-        switchDotColor: NSColor,
-        switchDotHalo: NSColor?,
-        switchDotRadius: CGFloat,
-        topRailAlpha: CGFloat
+    /// Draws the switch silhouette: top rail, bottom rail, quadratic switch
+    /// link, optional junction circles. Coordinates are in 18×18 top-left
+    /// origin (Y flipped to AppKit's bottom-left origin).
+    private static func drawSwitch(
+        strokeColor: NSColor,
+        junctionColor: NSColor?
     ) {
-        let railStroke: CGFloat = 2.6
-        let diagonalStroke: CGFloat = 2.2
+        let strokeW: CGFloat = 1.8
 
         func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
             NSPoint(x: x, y: 18 - y)
         }
 
-        // 1. Top rail (main line, horizontal)
-        railColor.withAlphaComponent(topRailAlpha).setStroke()
+        strokeColor.setStroke()
+
+        // Top rail
         let topRail = NSBezierPath()
         topRail.move(to: pt(2, 6))
         topRail.line(to: pt(16, 6))
-        topRail.lineWidth = railStroke
+        topRail.lineWidth = strokeW
         topRail.lineCapStyle = .round
         topRail.stroke()
 
-        // 2. Bottom rail (diverted line, horizontal)
-        railColor.setStroke()
+        // Bottom rail
         let bottomRail = NSBezierPath()
         bottomRail.move(to: pt(2, 12))
         bottomRail.line(to: pt(16, 12))
-        bottomRail.lineWidth = railStroke
+        bottomRail.lineWidth = strokeW
         bottomRail.lineCapStyle = .round
         bottomRail.stroke()
 
-        // 3. Switch diagonal — connects top rail to bottom rail. Slightly
-        //    thinner than rails so it reads as a connector, not a third track.
-        diagonalColor.setStroke()
-        let diagonal = NSBezierPath()
-        diagonal.move(to: pt(8, 6))
-        diagonal.line(to: pt(11, 12))
-        diagonal.lineWidth = diagonalStroke
-        diagonal.lineCapStyle = .round
-        diagonal.stroke()
-
-        // 4. Switch-point dot at the diagonal's midpoint. Optional halo ring
-        //    bleeds past the dot radius for the "LED is powered" feel in the
-        //    routing state.
-        let centerX: CGFloat = 9.5
-        let centerY: CGFloat = 9
-        if let halo = switchDotHalo {
-            halo.setFill()
-            let haloR = switchDotRadius + 1.6
-            let haloRect = NSRect(
-                x: centerX - haloR, y: (18 - centerY) - haloR,
-                width: haloR * 2, height: haloR * 2
-            )
-            NSBezierPath(ovalIn: haloRect).fill()
-        }
-        switchDotColor.setFill()
-        let dotRect = NSRect(
-            x: centerX - switchDotRadius, y: (18 - centerY) - switchDotRadius,
-            width: switchDotRadius * 2, height: switchDotRadius * 2
+        // Switch link — quadratic (6,6) ⌒ (9,9) ⌒ (12,12)
+        let switchLink = NSBezierPath()
+        switchLink.move(to: pt(6, 6))
+        switchLink.curve(
+            to: pt(12, 12),
+            // NSBezierPath.curve uses cubic; convert quadratic to cubic:
+            // cp1 = start + 2/3*(quadCP - start),  cp2 = end + 2/3*(quadCP - end)
+            controlPoint1: pt(6 + (2.0/3.0) * (9 - 6), 6 + (2.0/3.0) * (9 - 6)),
+            controlPoint2: pt(12 + (2.0/3.0) * (9 - 12), 12 + (2.0/3.0) * (9 - 12))
         )
-        NSBezierPath(ovalIn: dotRect).fill()
+        switchLink.lineWidth = strokeW
+        switchLink.lineCapStyle = .round
+        switchLink.stroke()
+
+        // Junction LEDs (active state only)
+        if let junctionColor {
+            junctionColor.setFill()
+            let r: CGFloat = 1.4
+            for (cx, cy) in [(6.0, 6.0), (12.0, 12.0)] {
+                let rect = NSRect(
+                    x: cx - r, y: (18 - cy) - r,
+                    width: r * 2, height: r * 2
+                )
+                NSBezierPath(ovalIn: rect).fill()
+            }
+        }
     }
 }

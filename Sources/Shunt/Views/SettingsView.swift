@@ -1,52 +1,113 @@
 import SwiftUI
 import AppKit
 
-/// The DESIGN.md sidebar layout, implemented as a plain HStack rather than
-/// `NavigationSplitView`. NavigationSplitView hosted inside a custom
-/// `NSWindowController`-owned `NSWindow` (which we need because of
-/// LSUIElement=true) renders as an empty shell — the sidebar list and detail
-/// closures silently don't emit views. An HStack with a custom sidebar works
-/// reliably across macOS 14+ and gives us full control over row style
-/// (matches DESIGN.md §Layout exactly).
+/// Liquid Glass redesign — translucent panels over a vibrant theme-tinted
+/// desktop, hairline gloss, soft drop shadows. Built as a plain `HStack`
+/// (not `NavigationSplitView`) because that doesn't render reliably inside
+/// the custom `NSWindow` we need for `LSUIElement=true`.
 struct SettingsView: View {
     @StateObject private var model = SettingsViewModel()
     @StateObject private var activeTheme = ActiveTheme.shared
+    @StateObject private var nav = SettingsNavigation.shared
     @State private var selection: SidebarItem = .general
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: 200)
-                .background(SidebarVisualEffect())
-            Divider()
-            detailView
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Color(nsColor: .windowBackgroundColor))
+        ZStack {
+            // Translucent system material that lets the wallpaper through.
+            // .hudWindow gives the deep, glassy substrate; behindWindow blends
+            // with the desktop rather than the layer behind us.
+            LiquidWindowMaterial(material: .hudWindow, blendingMode: .behindWindow)
+                .ignoresSafeArea()
+
+            // Theme-tinted desktop wash on top, semi-transparent so the system
+            // material still leaks color through.
+            activeTheme.current.desktopGradient()
+                .opacity(0.55)
+                .ignoresSafeArea()
+
+            // Top hairline gloss — fakes the rim of light at the window's top edge.
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [.white.opacity(0.18), .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: 1)
+                Spacer(minLength: 0)
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            HStack(spacing: 0) {
+                sidebar
+                    .frame(width: 210)
+
+                // Vertical hairline divider between sidebar and detail
+                Rectangle()
+                    .fill(activeTheme.current.edge)
+                    .frame(width: 0.5)
+
+                detailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
         }
-        .frame(width: 820, height: 520)
+        .frame(width: 920, height: 620)
         .environment(\.shuntTheme, activeTheme.current)
-        .tint(activeTheme.current.accent(for: scheme))
-        .onAppear { model.reload() }
+        .preferredColorScheme(.dark)
+        .tint(activeTheme.current.accentDark)
+        .onAppear {
+            model.reload()
+            // Apply any pending deep-link request (e.g. menubar "Edit Rules").
+            if let req = nav.requestedTab {
+                selection = req
+                nav.requestedTab = nil
+            }
+        }
+        .onReceive(nav.$requestedTab) { new in
+            if let new {
+                selection = new
+                // Defer clearing to avoid mutating @Published while delivering.
+                DispatchQueue.main.async { nav.requestedTab = nil }
+            }
+        }
     }
 
     // MARK: - Sidebar
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(SidebarItem.allCases) { item in
-                SidebarRow(
-                    item: item,
-                    isSelected: selection == item,
-                    accent: activeTheme.current.accent(for: scheme)
-                ) {
-                    selection = item
+        VStack(alignment: .leading, spacing: 0) {
+            // Brand header: logo + wordmark
+            HStack(spacing: 8) {
+                ShuntLogo(size: 22, theme: activeTheme.current)
+                Text("shunt")
+                    .font(.system(size: 14, weight: .semibold, design: .default))
+                    .tracking(-0.28)
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
+
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(SidebarItem.allCases) { item in
+                    SidebarRow(
+                        item: item,
+                        isSelected: selection == item,
+                        theme: activeTheme.current
+                    ) {
+                        selection = item
+                    }
                 }
             }
+            .padding(.horizontal, 10)
+
             Spacer()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
+        .background(
+            // Sidebar gets a slightly more opaque glass than the body so the
+            // delineation is felt without a hard divider.
+            Color.white.opacity(0.025)
+        )
     }
 
     // MARK: - Detail
@@ -65,58 +126,63 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Sidebar row (DESIGN.md §Layout: 14pt icon + 13pt label, 8pt/6pt padding)
+// MARK: - Sidebar row (liquid glass)
 
 private struct SidebarRow: View {
     let item: SidebarItem
     let isSelected: Bool
-    let accent: Color
+    let theme: ShuntTheme
     let onTap: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: item.systemImage)
                     .font(.system(size: 13, weight: .regular))
                     .frame(width: 18, alignment: .center)
-                    .foregroundStyle(isSelected ? accent : Color.primary.opacity(0.8))
+                    .foregroundStyle(isSelected ? theme.accentDark : Color.white.opacity(0.62))
                 Text(item.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(isSelected ? accent : Color.primary)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .tracking(-0.13)
+                    .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.62))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(rowBackground)
+                ZStack(alignment: .leading) {
+                    // Active row gradient
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(isSelected ? AnyShapeStyle(theme.cardGradient()) : AnyShapeStyle(Color.clear))
+
+                    // Hover-only fill (when not active)
+                    if !isSelected && isHovering {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color.white.opacity(0.04))
+                    }
+
+                    // Accent indicator — luminous bar on the left edge
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(theme.accentDark)
+                            .frame(width: 2.5)
+                            .padding(.leading, -5)
+                            .padding(.vertical, 8)
+                            .shadow(color: theme.accentDark, radius: 4)
+                    }
+                }
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(isSelected ? theme.edge : .clear, lineWidth: 0.5)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
     }
-
-    private var rowBackground: Color {
-        if isSelected { return accent.opacity(0.15) }
-        if isHovering { return Color.primary.opacity(0.06) }
-        return .clear
-    }
-}
-
-// MARK: - Sidebar material (NSVisualEffectView .sidebar)
-
-private struct SidebarVisualEffect: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.material = .sidebar
-        v.blendingMode = .behindWindow
-        v.state = .active
-        return v
-    }
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - Sidebar items

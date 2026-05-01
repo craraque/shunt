@@ -15,21 +15,33 @@ struct RulesTab: View {
     @State private var expanded: Set<UUID> = []
     @State private var focusedRuleID: UUID?
     @FocusState private var focusedBundleID: UUID?
+    @State private var applyStatus: ApplyStatus = .idle
+    @State private var applyResetTask: Task<Void, Never>?
     @Environment(\.shuntTheme) private var theme
     @Environment(\.colorScheme) private var scheme
 
+    private enum ApplyStatus: Equatable {
+        case idle
+        case applying
+        case ok
+        case error(String)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Rules")
-                    .font(.shuntTitle1)
+                    .font(.system(size: 26, weight: .semibold))
+                    .tracking(-0.65)
+                    .foregroundStyle(.white)
                 Text("Combine apps and hostnames into compound rules. A rule matches when every criterion is satisfied — \"Safari AND *.corp.com\" only routes Safari's traffic to corp domains.")
-                    .font(.shuntBody)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 28)
-            .padding(.top, 28)
+            .padding(.top, 24)
             .padding(.bottom, 16)
 
             ScrollViewReader { proxy in
@@ -114,6 +126,15 @@ struct RulesTab: View {
 
                     Spacer()
 
+                    if case .error(let msg) = applyStatus {
+                        Text(msg)
+                            .font(.shuntCaption)
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(msg)
+                    }
+
                     Button(role: .destructive) {
                         model.removeRules(ids: selection)
                         selection.removeAll()
@@ -121,8 +142,81 @@ struct RulesTab: View {
                         Label("Remove", systemImage: "minus")
                     }
                     .disabled(selection.isEmpty)
+
+                    Button {
+                        applyRules()
+                    } label: {
+                        applyButtonLabel
+                            .frame(minWidth: 110)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(applyButtonTint)
+                    .disabled(applyStatus == .applying)
+                    .animation(.easeInOut(duration: 0.18), value: applyStatus)
+                    .help("Push the current rules to the running proxy without cycling the tunnel. Keeps launcher dependencies (Tart, etc.) up.")
                 }
                 .padding(16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var applyButtonLabel: some View {
+        switch applyStatus {
+        case .idle:
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle")
+                Text("Apply")
+            }
+        case .applying:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                    .colorInvert().brightness(1)
+                Text("Applying…")
+            }
+        case .ok:
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Applied")
+            }
+        case .error:
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Failed")
+            }
+        }
+    }
+
+    private var applyButtonTint: Color {
+        switch applyStatus {
+        case .idle, .applying:
+            return theme.accent(for: scheme)
+        case .ok:
+            return theme.statusActive(for: scheme)
+        case .error:
+            return .orange
+        }
+    }
+
+    private func applyRules() {
+        model.save()
+        applyResetTask?.cancel()
+        applyStatus = .applying
+        let startedAt = Date()
+        AppServices.shared.proxyManager.applyRulesLive { result in
+            let elapsed = Date().timeIntervalSince(startedAt)
+            let delay = max(0, 0.6 - elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                switch result {
+                case .success:
+                    applyStatus = .ok
+                case .failure(let error):
+                    applyStatus = .error(error.localizedDescription)
+                }
+                applyResetTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if !Task.isCancelled { applyStatus = .idle }
+                }
             }
         }
     }

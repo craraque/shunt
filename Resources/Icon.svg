@@ -1,50 +1,70 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+<!--
+  Shunt app icon — Filament theme (default).
+  Geometry per design-handoff 2026-04-27 (100×100 canonical viewBox).
+  Two parallel rails + diagonal switch link, glass treatment.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2B2A28"/>
-      <stop offset="1" stop-color="#1A1A19"/>
+    <!-- Chassis: corner-to-corner Filament bg gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#221913"/>
+      <stop offset="1" stop-color="#0E0805"/>
     </linearGradient>
+
+    <!-- Rail/switch: horizontal accent gradient (40% → 100% → 40%) -->
+    <linearGradient id="rail" x1="14" y1="50" x2="86" y2="50" gradientUnits="userSpaceOnUse">
+      <stop offset="0"   stop-color="#FFB266" stop-opacity="0.4"/>
+      <stop offset="0.5" stop-color="#FFB266" stop-opacity="1"/>
+      <stop offset="1"   stop-color="#FF7A1A" stop-opacity="0.4"/>
+    </linearGradient>
+
+    <!-- Top gloss: radial highlight upper-left -->
+    <radialGradient id="gloss" cx="0.32" cy="0.18" r="0.7">
+      <stop offset="0"   stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="1"   stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Bloom blur filter (4px gaussian) -->
+    <filter id="bloomBlur" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
   </defs>
-  <!-- Rounded square chassis (Apple HIG 22% corner radius) -->
-  <rect width="160" height="160" rx="36" fill="url(#bg)"/>
 
-  <!-- Top rail (main line) — receded, inactive -->
-  <line x1="22" y1="76" x2="138" y2="76"
-        stroke="#F2F1EE" stroke-width="7" stroke-linecap="round" opacity="0.35"/>
+  <!-- 1. Squircle chassis -->
+  <rect width="100" height="100" rx="28" fill="url(#bg)"/>
 
-  <!-- Top rail cross-ties (very subtle, indicate "this is track") -->
-  <g opacity="0.18" fill="#F2F1EE">
-    <rect x="30" y="68" width="3" height="16" rx="1"/>
-    <rect x="50" y="68" width="3" height="16" rx="1"/>
-    <rect x="90" y="68" width="3" height="16" rx="1"/>
-    <rect x="110" y="68" width="3" height="16" rx="1"/>
-    <rect x="130" y="68" width="3" height="16" rx="1"/>
-  </g>
+  <!-- 2. Bloom — accent ellipse behind the rails, in the switch zone -->
+  <ellipse cx="50" cy="50" rx="34" ry="14"
+           fill="#FFB266" fill-opacity="0.22" filter="url(#bloomBlur)"/>
 
-  <!-- Bottom rail (diverted line) — active, Filament accent -->
-  <line x1="22" y1="104" x2="138" y2="104"
-        stroke="#FB923C" stroke-width="7" stroke-linecap="round"/>
+  <!-- 3a. Three colored strokes (rails + switch) -->
+  <line x1="14" y1="36" x2="86" y2="36"
+        stroke="url(#rail)" stroke-width="9" stroke-linecap="round"/>
+  <line x1="14" y1="64" x2="86" y2="64"
+        stroke="url(#rail)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M 38 36 Q 50 50 62 64"
+        stroke="url(#rail)" stroke-width="9" stroke-linecap="round" fill="none"/>
 
-  <!-- Bottom rail cross-ties (warmer, more visible) -->
-  <g opacity="0.35" fill="#FB923C">
-    <rect x="30" y="96" width="3" height="16" rx="1"/>
-    <rect x="50" y="96" width="3" height="16" rx="1"/>
-    <rect x="90" y="96" width="3" height="16" rx="1"/>
-    <rect x="110" y="96" width="3" height="16" rx="1"/>
-    <rect x="130" y="96" width="3" height="16" rx="1"/>
-  </g>
+  <!-- 3b. Inner glass highlights — width 1.8, white 55% -->
+  <line x1="14" y1="36" x2="86" y2="36"
+        stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="14" y1="64" x2="86" y2="64"
+        stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M 38 36 Q 50 50 62 64"
+        stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="1.8" stroke-linecap="round" fill="none"/>
 
-  <!-- Switch diagonal connecting the two rails -->
-  <line x1="60" y1="76" x2="78" y2="104"
-        stroke="#FB923C" stroke-width="6" stroke-linecap="round"/>
+  <!-- 4. Junction nodes (signal color) + specular highlights -->
+  <circle cx="38" cy="36" r="4.5" fill="#7CF3A8"/>
+  <circle cx="36.8" cy="34.8" r="1.4" fill="#FFFFFF" fill-opacity="0.9"/>
+  <circle cx="62" cy="64" r="4.5" fill="#7CF3A8"/>
+  <circle cx="60.8" cy="62.8" r="1.4" fill="#FFFFFF" fill-opacity="0.9"/>
 
-  <!-- Switch-point dot (hero element) -->
-  <circle cx="69" cy="90" r="7" fill="#FB923C"/>
-  <!-- Inner highlight on the dot for depth (single subtle ring, not a gradient) -->
-  <circle cx="69" cy="90" r="3" fill="#FED7AA"/>
+  <!-- 5. Top gloss — painted on top of everything -->
+  <rect width="100" height="100" rx="28" fill="url(#gloss)"/>
 
-  <!-- Terminus cap — the "routing live" signal at the end of the active rail -->
-  <circle cx="138" cy="104" r="6" fill="#4ADE80"/>
-  <circle cx="138" cy="104" r="2.5" fill="#BBF7D0"/>
+  <!-- 6. Chassis hairline — sealed edge -->
+  <rect x="0.5" y="0.5" width="99" height="99" rx="27.5"
+        fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="0.5"/>
 </svg>

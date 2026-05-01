@@ -253,7 +253,18 @@ public actor UpstreamLauncherEngine {
         for (stageIdxReversed, stage) in stages.enumerated().reversed() {
             await withTaskGroup(of: Void.self) { group in
                 for entry in stage.entries {
-                    guard let rt = runtimes[entry.id], rt.ownedByUs, let pid = rt.pid else {
+                    guard let rt = runtimes[entry.id], rt.ownedByUs else {
+                        continue
+                    }
+                    // We own this entry. Two valid paths:
+                    //   - We have a tracked PID (we spawned it) → SIGTERM it,
+                    //     optionally preceded by a custom stopCommand.
+                    //   - We have no PID but a stopCommand (alwaysReclaim or
+                    //     reclaim-button case for VM-style entries) → run the
+                    //     stopCommand and trust it to bring the daemon down.
+                    let trackedPid = rt.pid ?? 0
+                    let hasStopCommand = !(entry.stopCommand?.isEmpty ?? true)
+                    guard trackedPid > 0 || hasStopCommand else {
                         continue
                     }
                     let stopCommand = entry.stopCommand
@@ -263,7 +274,7 @@ public actor UpstreamLauncherEngine {
                                         stageIdx: stageIdx, entry: entry,
                                         state: .stopping, ownedByUs: true,
                                         detail: nil)
-                        await self.stop(entry: entry, pid: pid, stopCommand: stopCommand)
+                        await self.stop(entry: entry, pid: trackedPid, stopCommand: stopCommand)
                         await self.markStopped(entryID: entry.id)
                         await self.emit(onEvent,
                                         stageIdx: stageIdx, entry: entry,
@@ -282,6 +293,22 @@ public actor UpstreamLauncherEngine {
     /// Current snapshot of engine state, keyed by entry ID. For UI consumption.
     public func snapshot() -> [UUID: (state: EntryState, ownedByUs: Bool)] {
         runtimes.mapValues { ($0.state, $0.ownedByUs) }
+    }
+
+    /// Flip an entry's in-session ownership to `true`. Backs the "Reclaim"
+    /// button in the Launcher UI: if the entry is currently `running` but
+    /// `ownedByUs == false` (we found it already healthy and policy was .ask
+    /// or .neverReclaim), flipping ownership ensures the next `stopAll` will
+    /// run the user's `stopCommand`. No-op if the entry isn't tracked or
+    /// isn't in `running` state.
+    public func reclaim(entryID: UUID) {
+        guard var rt = runtimes[entryID] else { return }
+        guard case .running = rt.state else { return }
+        guard !rt.ownedByUs else { return }
+        rt.ownedByUs = true
+        runtimes[entryID] = rt
+        // Don't persist — there's no PID to record. The reclaim is
+        // session-scoped; persistent reclaim is the .alwaysReclaim policy.
     }
 
     // MARK: - Stage + entry execution
@@ -312,10 +339,13 @@ public actor UpstreamLauncherEngine {
         //    before any state mutation that would be hard to unwind.
         if Task.isCancelled { throw CancellationError() }
 
-        // 1. Idempotency probe: if already healthy, decide ownership by
-        //    consulting the persisted record from prior sessions. A PID we
-        //    previously spawned that's still alive → reclaim as ours; any
-        //    other "already healthy" case → genuinely external.
+        // 1. Idempotency probe: if already healthy, decide ownership in this
+        //    order:
+        //      a. Persisted PID from a prior session that's still alive → ours.
+        //      b. `externalPolicy == .alwaysReclaim` → ours (no PID, but
+        //         stopCommand fully owns lifecycle — Parallels/VM pattern).
+        //      c. `.ask` / `.neverReclaim` → external; UI may flip later via
+        //         the Reclaim button or the ask-prompt response.
         let initial = await LauncherProbes.run(entry.healthProbe, upstream: upstream)
         if Task.isCancelled { throw CancellationError() }
         if initial.ok {
@@ -328,10 +358,21 @@ public actor UpstreamLauncherEngine {
                      detail: "reclaimed pid=\(reclaimedPID) from prior session; \(initial.detail)")
                 return
             }
-            runtimes[entry.id] = Runtime(state: .running, pid: nil, ownedByUs: false)
-            emit(onEvent, stageIdx: stageIndex, entry: entry,
-                 state: .running, ownedByUs: false,
-                 detail: "already healthy: \(initial.detail)")
+            switch entry.externalPolicy {
+            case .alwaysReclaim:
+                // No PID — lifecycle is delegated to stopCommand. Don't
+                // persist (nothing to track across processes); the policy
+                // itself is durable via Settings.
+                runtimes[entry.id] = Runtime(state: .running, pid: nil, ownedByUs: true)
+                emit(onEvent, stageIdx: stageIndex, entry: entry,
+                     state: .running, ownedByUs: true,
+                     detail: "already healthy + policy=alwaysReclaim: \(initial.detail)")
+            case .ask, .neverReclaim:
+                runtimes[entry.id] = Runtime(state: .running, pid: nil, ownedByUs: false)
+                emit(onEvent, stageIdx: stageIndex, entry: entry,
+                     state: .running, ownedByUs: false,
+                     detail: "already healthy: \(initial.detail)")
+            }
             return
         }
 
@@ -416,16 +457,17 @@ public actor UpstreamLauncherEngine {
             task.standardError = FileHandle.nullDevice
             do { try task.run() } catch {
                 // Fall back to signal if the stop command couldn't spawn.
-                _ = gracefulTerminate(pid: pid)
+                if pid > 0 { _ = gracefulTerminate(pid: pid) }
                 return
             }
             task.waitUntilExit()
             // Best-effort: if the original pid is still alive after the stop
-            // command, SIGTERM + grace + SIGKILL it.
-            if kill(pid, 0) == 0 {
+            // command, SIGTERM + grace + SIGKILL it. Skip when pid is unset
+            // (entries whose lifecycle is delegated entirely to stopCommand).
+            if pid > 0, kill(pid, 0) == 0 {
                 _ = gracefulTerminate(pid: pid)
             }
-        } else {
+        } else if pid > 0 {
             _ = gracefulTerminate(pid: pid)
         }
     }

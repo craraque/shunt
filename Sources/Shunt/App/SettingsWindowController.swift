@@ -9,12 +9,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private convenience init() {
         let content = NSHostingController(rootView: SettingsView())
+        // Transparent NSHostingController background so the SwiftUI
+        // LiquidWindowMaterial layer is what the user sees, not the
+        // controller's default opaque chrome.
+        content.view.wantsLayer = true
+        content.view.layer?.backgroundColor = NSColor.clear.cgColor
+
         let window = NSWindow(contentViewController: content)
         window.title = "Shunt Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 820, height: 520))
-        window.contentMinSize = NSSize(width: 820, height: 520)
+        window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+        window.setContentSize(NSSize(width: 920, height: 620))
+        window.contentMinSize = NSSize(width: 920, height: 620)
         window.isReleasedWhenClosed = false
+
+        // Liquid glass: window itself transparent so the embedded
+        // NSVisualEffectView is what renders the material. Title bar floats
+        // over content (full-size content view) and shows no chrome — we
+        // get the traffic lights, the title is rendered by the system.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = false
+        window.backgroundColor = .clear
+
         window.center()
 
         self.init(window: window)
