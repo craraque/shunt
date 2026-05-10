@@ -26,15 +26,15 @@ Before doing any architectural work, read `docs/RESEARCH.md` — it is the sourc
 - Swift Package Manager, no `.xcodeproj`, no third-party dependencies.
 - Two SwiftPM targets minimum: main app (`Shunt`) and system extension (`ShuntProxy`).
 
-## Entitlements (managed by Apple — request day 1)
+## Entitlements / Network Extension packaging
 
-Required entitlement keys:
-- `com.apple.developer.networking.networkextension` with value `transparent-proxy-systemextension`
-- `com.apple.developer.system-extension.install`
+Required entitlement keys for Developer ID distribution:
+- Container app: `com.apple.developer.system-extension.install`
+- System extension / proxy entitlement: `com.apple.developer.networking.networkextension` with value `app-proxy-provider-systemextension`
 
-The network extension entitlement is **managed** — submit a request at <https://developer.apple.com/contact/network-extension>. Expected review: 1–4 weeks. In the request, describe Shunt as *"per-application conditional network segmentation to a user-controlled isolated virtualized environment, for BYOD separation of personal-device traffic from corporate-VPN traffic."* Never use "bypass", "hide", "evade".
+Important Apple quirk: Shunt implements `NETransparentProxyProvider`, but for Developer ID system-extension distribution it still uses the app-proxy entitlement family and the `Info.plist` `NEProviderClasses` key `com.apple.networkextension.app-proxy`. Do **not** use the folklore value `transparent-proxy-systemextension` or the plist key `com.apple.networkextension.transparent-proxy`; current tests assert this packaging contract.
 
-While waiting for approval, develop locally with:
+For local development:
 
 ```bash
 systemextensionsctl developer on

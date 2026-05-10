@@ -61,7 +61,19 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         completionHandler: @escaping () -> Void
     ) {
         logger.info("stopProxy reason=\(reason.rawValue, privacy: .public)")
+        closeActiveBridges()
         completionHandler()
+    }
+
+    private func closeActiveBridges() {
+        bridgesLock.lock()
+        let activeBridges = Array(bridges.values)
+        bridges.removeAll()
+        bridgesLock.unlock()
+
+        for bridge in activeBridges {
+            bridge.close()
+        }
     }
 
     // Live rule/upstream update without cycling the tunnel. The containing

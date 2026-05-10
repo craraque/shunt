@@ -1,5 +1,6 @@
 import Foundation
 import NetworkExtension
+import ShuntCore
 import os
 
 /// Bridges a single NEAppProxyTCPFlow through a SOCKS5 proxy via a POSIX socket.
@@ -17,6 +18,7 @@ final class SOCKS5Bridge {
 
     var onFinish: (() -> Void)?
     private var didFinish = false
+    private let finishLock = NSLock()
 
     private var hasAuth: Bool {
         !username.isEmpty && !password.isEmpty
@@ -177,19 +179,12 @@ final class SOCKS5Bridge {
 
     private func sendConnect() {
         var packet = Data([0x05, 0x01, 0x00])
-        if let ipv4 = Self.parseIPv4(remoteHost) {
-            packet.append(0x01)
-            packet.append(contentsOf: ipv4)
-        } else {
-            packet.append(0x03)
-            let utf8 = Array(remoteHost.utf8)
-            guard utf8.count <= 255 else {
-                logger.error("hostname too long: \(self.remoteHost, privacy: .public)")
-                closeAll()
-                return
-            }
-            packet.append(UInt8(utf8.count))
-            packet.append(contentsOf: utf8)
+        do {
+            packet.append(try SOCKS5AddressEncoder.encodeAddress(host: remoteHost))
+        } catch {
+            logger.error("invalid SOCKS5 destination \(self.remoteHost, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            closeAll()
+            return
         }
         packet.append(UInt8(remotePort >> 8))
         packet.append(UInt8(remotePort & 0xFF))
@@ -288,24 +283,22 @@ final class SOCKS5Bridge {
         }
     }
 
+    func close() {
+        closeAll()
+    }
+
     private func closeAll() {
         socket.close()
         flow.closeReadWithError(nil)
         flow.closeWriteWithError(nil)
-        if !didFinish {
-            didFinish = true
+
+        finishLock.lock()
+        let shouldNotify = !didFinish
+        didFinish = true
+        finishLock.unlock()
+
+        if shouldNotify {
             onFinish?()
         }
-    }
-
-    static func parseIPv4(_ s: String) -> [UInt8]? {
-        let parts = s.split(separator: ".")
-        guard parts.count == 4 else { return nil }
-        var out = [UInt8]()
-        for p in parts {
-            guard let n = UInt8(p) else { return nil }
-            out.append(n)
-        }
-        return out
     }
 }
