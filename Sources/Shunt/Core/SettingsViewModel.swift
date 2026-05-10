@@ -354,6 +354,29 @@ final class SettingsViewModel: ObservableObject {
 
     // MARK: - Upstream launcher (Phase 3f)
 
+    /// One-click preset for the current Tart macOS guest + guest VPN topology:
+    /// Shunt talks to host loopback, while a launcher entry creates the guest →
+    /// host SSH remote forward and waits for proxied egress to differ from host
+    /// direct egress before enabling the Network Extension.
+    func applyTartReverseTunnelPreset(
+        vmName: String = "tahoe-base",
+        hostBridgeIP: String = "192.168.64.1",
+        hostPort: UInt16 = 1080,
+        guestSocksPort: UInt16 = 1080,
+        sshIdentityPath: String = "/Users/admin/.ssh/id_shunttunnel"
+    ) {
+        let preset = TartReverseTunnelPreset(
+            vmName: vmName,
+            hostBridgeIP: hostBridgeIP,
+            hostPort: hostPort,
+            guestSocksPort: guestSocksPort,
+            sshIdentityPath: sshIdentityPath
+        )
+        settings.upstream = preset.upstream
+        settings.launcher = preset.launcher
+        save()
+    }
+
     func addLauncherStage() {
         let nextNumber = settings.launcher.stages.count + 1
         var launcher = settings.launcher

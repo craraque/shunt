@@ -61,6 +61,36 @@ struct UpstreamTab: View {
                     }
                 }
 
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                        .foregroundStyle(theme.accent(for: scheme))
+                        .font(.system(size: 17, weight: .semibold))
+                        .padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Tart + Surfshark VM preset")
+                            .font(.shuntLabel.weight(.medium))
+                            .foregroundStyle(.white)
+                        Text("Sets upstream to `127.0.0.1:1080` and adds the `tahoe-base` reverse tunnel launcher with an egress-diff health probe.")
+                            .font(.shuntCaption)
+                            .foregroundStyle(.white.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button {
+                        applyTartReverseTunnelPreset()
+                    } label: {
+                        Label("Use preset", systemImage: "sparkles")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(theme.accent(for: scheme))
+                }
+                .padding(12)
+                .background(theme.accent(for: scheme).opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(theme.accent(for: scheme).opacity(0.25), lineWidth: 0.5)
+                )
+
                 LiquidSectionLabel(text: "Interface binding", theme: theme)
                 LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
                     liquidRow(label: "Bind to") {
@@ -222,6 +252,23 @@ struct UpstreamTab: View {
             Spacer()
         }
         .padding(.vertical, 10)
+    }
+
+    private func applyTartReverseTunnelPreset() {
+        model.applyTartReverseTunnelPreset()
+        host = model.settings.upstream.host
+        portText = String(model.settings.upstream.port)
+        bindInterface = model.settings.upstream.bindInterface ?? ""
+        username = model.settings.upstream.username
+        password = model.settings.upstream.password
+        authEnabled = !username.isEmpty || !password.isEmpty
+        useRemoteDNS = model.settings.upstream.useRemoteDNS
+        applyResetTask?.cancel()
+        applyStatus = .ok
+        applyResetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if !Task.isCancelled { applyStatus = .idle }
+        }
     }
 
     private func apply() {
