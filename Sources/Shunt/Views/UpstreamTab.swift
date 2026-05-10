@@ -67,19 +67,19 @@ struct UpstreamTab: View {
                         .font(.system(size: 17, weight: .semibold))
                         .padding(.top, 1)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Tart + Surfshark VM preset")
+                        Text("Advanced SSH reverse tunnel template")
                             .font(.shuntLabel.weight(.medium))
                             .foregroundStyle(.white)
-                        Text("Sets upstream to `127.0.0.1:1080` and adds the `tahoe-base` reverse tunnel launcher with an egress-diff health probe.")
+                        Text("Sets upstream to `127.0.0.1:1080` and adds an editable `ssh -R` launcher with an egress-diff probe. Tart is only the default dev command; replace it for Parallels/production. Launcher commands run in a shell, so edit only trusted commands.")
                             .font(.shuntCaption)
                             .foregroundStyle(.white.opacity(0.62))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
                     Button {
-                        applyTartReverseTunnelPreset()
+                        applyReverseSSHTunnelPreset()
                     } label: {
-                        Label("Use preset", systemImage: "sparkles")
+                        Label("Add template", systemImage: "sparkles")
                     }
                     .buttonStyle(.bordered)
                     .tint(theme.accent(for: scheme))
@@ -254,8 +254,8 @@ struct UpstreamTab: View {
         .padding(.vertical, 10)
     }
 
-    private func applyTartReverseTunnelPreset() {
-        model.applyTartReverseTunnelPreset()
+    private func applyReverseSSHTunnelPreset() {
+        model.applyReverseSSHTunnelPreset()
         host = model.settings.upstream.host
         portText = String(model.settings.upstream.port)
         bindInterface = model.settings.upstream.bindInterface ?? ""

@@ -354,22 +354,25 @@ final class SettingsViewModel: ObservableObject {
 
     // MARK: - Upstream launcher (Phase 3f)
 
-    /// One-click preset for the current Tart macOS guest + guest VPN topology:
-    /// Shunt talks to host loopback, while a launcher entry creates the guest →
-    /// host SSH remote forward and waits for proxied egress to differ from host
-    /// direct egress before enabling the Network Extension.
-    func applyTartReverseTunnelPreset(
-        vmName: String = "tahoe-base",
+    /// One-click template for an advanced SSH reverse tunnel topology:
+    /// Shunt talks to host loopback, while a launcher entry creates a remote →
+    /// host SSH forward and waits for proxied egress to differ from host direct
+    /// egress before enabling the Network Extension. The generated command is
+    /// editable in the Launcher section; the default command prefix targets the
+    /// local Tart development VM, but production can replace it with Parallels,
+    /// plain SSH, launchd, or any other tunnel bootstrap.
+    func applyReverseSSHTunnelPreset(
+        commandPrefix: String = "tart exec tahoe-base",
         hostBridgeIP: String = "192.168.64.1",
         hostPort: UInt16 = 1080,
-        guestSocksPort: UInt16 = 1080,
+        remoteSocksPort: UInt16 = 1080,
         sshIdentityPath: String = "/Users/admin/.ssh/id_shunttunnel"
     ) {
-        let preset = TartReverseTunnelPreset(
-            vmName: vmName,
+        let preset = ReverseSSHTunnelPreset(
+            commandPrefix: commandPrefix,
             hostBridgeIP: hostBridgeIP,
             hostPort: hostPort,
-            guestSocksPort: guestSocksPort,
+            remoteSocksPort: remoteSocksPort,
             sshIdentityPath: sshIdentityPath
         )
         settings.upstream = preset.upstream

@@ -1,23 +1,24 @@
 import XCTest
 @testable import ShuntCore
 
-final class TartReverseTunnelPresetTests: XCTestCase {
+final class ReverseSSHTunnelPresetTests: XCTestCase {
     func testPresetUsesHostLoopbackUpstreamAndEgressProbe() throws {
-        let preset = TartReverseTunnelPreset(
-            vmName: "tahoe-base",
+        let preset = ReverseSSHTunnelPreset(
+            commandPrefix: "tart exec tahoe-base",
             hostBridgeIP: "192.168.64.1",
             hostPort: 1080,
-            guestSocksPort: 1080,
+            remoteSocksPort: 1080,
             sshIdentityPath: "/Users/admin/.ssh/id_shunttunnel"
         )
 
         XCTAssertEqual(preset.upstream, UpstreamProxy(host: "127.0.0.1", port: 1080, bindInterface: nil, useRemoteDNS: true))
         XCTAssertEqual(preset.launcher.stages.count, 1)
-        XCTAssertEqual(preset.launcher.stages.first?.name, "Tart reverse tunnel")
+        XCTAssertEqual(preset.launcher.stages.first?.name, "SSH reverse tunnel")
 
         let entry = try XCTUnwrap(preset.launcher.stages.first?.entries.first)
-        XCTAssertEqual(entry.name, "tahoe-base → localhost:1080")
+        XCTAssertEqual(entry.name, "Host localhost:1080 ⇠ remote SOCKS:1080")
         XCTAssertTrue(entry.startCommand.contains("tart exec tahoe-base"))
+        XCTAssertTrue(entry.startCommand.contains("ssh -N"))
         XCTAssertTrue(entry.startCommand.contains("-R 127.0.0.1:1080:127.0.0.1:1080"))
         XCTAssertTrue(entry.startCommand.contains("-o IdentitiesOnly=yes"))
         XCTAssertTrue(entry.startCommand.contains("-i /Users/admin/.ssh/id_shunttunnel"))
@@ -30,16 +31,33 @@ final class TartReverseTunnelPresetTests: XCTestCase {
         XCTAssertEqual(entry.healthProbe, .egressDiffersFromDirect(probeURL: HealthProbe.defaultProbeURL))
     }
 
+    func testPresetCanGeneratePlainSSHCommandWithoutTartOrParallelsWrapper() {
+        let preset = ReverseSSHTunnelPreset(
+            commandPrefix: "",
+            hostBridgeIP: "10.37.129.1",
+            sshUser: "tunnel",
+            hostPort: 2080,
+            remoteSocksPort: 1080,
+            sshIdentityPath: "/Users/alice/.ssh/shunt_tunnel"
+        )
+
+        let command = preset.launcher.stages[0].entries[0].startCommand
+        XCTAssertTrue(command.hasPrefix("ssh -N -R 127.0.0.1:2080:127.0.0.1:1080"))
+        XCTAssertFalse(command.contains("tart exec"))
+        XCTAssertTrue(command.contains("tunnel@10.37.129.1"))
+    }
+
     func testPresetShellQuotesUnsafeArguments() {
-        let preset = TartReverseTunnelPreset(
-            vmName: "vm name; rm -rf /",
-            hostBridgeIP: "192.168.64.1",
+        let preset = ReverseSSHTunnelPreset(
+            commandPrefix: "tart exec 'vm name; rm -rf /'",
+            hostBridgeIP: "host ip",
             sshUser: "admin user",
             sshIdentityPath: "/tmp/key with spaces"
         )
 
-        XCTAssertTrue(preset.launcher.stages[0].entries[0].startCommand.contains("'vm name; rm -rf /'"))
-        XCTAssertTrue(preset.launcher.stages[0].entries[0].startCommand.contains("-i '/tmp/key with spaces'"))
-        XCTAssertTrue(preset.launcher.stages[0].entries[0].startCommand.contains("'admin user'@192.168.64.1"))
+        let command = preset.launcher.stages[0].entries[0].startCommand
+        XCTAssertTrue(command.contains("tart exec 'vm name; rm -rf /'"))
+        XCTAssertTrue(command.contains("-i '/tmp/key with spaces'"))
+        XCTAssertTrue(command.contains("'admin user'@'host ip'"))
     }
 }

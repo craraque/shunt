@@ -1,41 +1,39 @@
 import Foundation
 
-/// Convenience builder for the production Tart + guest-VPN topology where the
-/// guest owns the VPN/SOCKS egress and exposes it to Shunt through an SSH
-/// remote forward on host loopback.
+/// Convenience builder for VM/container/remote-host topologies where the SOCKS5
+/// server is not directly reachable from the host, but that environment can SSH
+/// back to the host and publish the SOCKS port on host loopback with `ssh -R`.
 ///
-/// The generated launcher entry runs on the host and asks Tart to execute the
-/// SSH client in the VM:
-///
-/// ```text
-/// tart exec <vm> ssh -N -R 127.0.0.1:<hostPort>:127.0.0.1:<guestSocksPort> ...
-/// ```
-///
-/// Shunt itself then uses `127.0.0.1:<hostPort>` as the upstream, avoiding the
-/// direct host→guest path that VPN clients can break with asymmetric routing.
-public struct TartReverseTunnelPreset: Hashable, Sendable {
-    public var vmName: String
+/// Shunt itself uses `127.0.0.1:<hostPort>` as the upstream. The launcher command
+/// is intentionally editable: production can use Parallels, a plain SSH command,
+/// launchd, or an already-running external tunnel; Tart is only the development
+/// wrapper used by the default example.
+public struct ReverseSSHTunnelPreset: Hashable, Sendable {
+    public var launcherName: String
+    public var commandPrefix: String
     public var hostBridgeIP: String
     public var sshUser: String
     public var hostPort: UInt16
-    public var guestSocksPort: UInt16
+    public var remoteSocksPort: UInt16
     public var sshIdentityPath: String
     public var probeURL: URL
 
     public init(
-        vmName: String,
-        hostBridgeIP: String,
+        launcherName: String = "SSH reverse tunnel",
+        commandPrefix: String = "tart exec tahoe-base",
+        hostBridgeIP: String = "192.168.64.1",
         sshUser: String = "admin",
         hostPort: UInt16 = 1080,
-        guestSocksPort: UInt16 = 1080,
+        remoteSocksPort: UInt16 = 1080,
         sshIdentityPath: String = "/Users/admin/.ssh/id_shunttunnel",
         probeURL: URL = HealthProbe.defaultProbeURL
     ) {
-        self.vmName = vmName
+        self.launcherName = launcherName
+        self.commandPrefix = commandPrefix
         self.hostBridgeIP = hostBridgeIP
         self.sshUser = sshUser
         self.hostPort = hostPort
-        self.guestSocksPort = guestSocksPort
+        self.remoteSocksPort = remoteSocksPort
         self.sshIdentityPath = sshIdentityPath
         self.probeURL = probeURL
     }
@@ -56,7 +54,7 @@ public struct TartReverseTunnelPreset: Hashable, Sendable {
     /// egress differs from the host's direct egress before enabling the tunnel.
     public var launcher: UpstreamLauncher {
         let entry = UpstreamLauncherEntry(
-            name: "\(vmName) → localhost:\(hostPort)",
+            name: "Host localhost:\(hostPort) ⇠ remote SOCKS:\(remoteSocksPort)",
             startCommand: startCommand,
             stopCommand: nil,
             healthProbe: .egressDiffersFromDirect(probeURL: probeURL),
@@ -65,16 +63,25 @@ public struct TartReverseTunnelPreset: Hashable, Sendable {
             externalPolicy: .neverReclaim
         )
         return UpstreamLauncher(stages: [
-            UpstreamLauncherStage(name: "Tart reverse tunnel", entries: [entry])
+            UpstreamLauncherStage(name: launcherName, entries: [entry])
         ])
     }
 
     /// Full command suitable for `UpstreamLauncherEntry.startCommand`.
+    ///
+    /// `commandPrefix` is evaluated before `ssh`. Examples:
+    /// - `tart exec tahoe-base` for this development VM.
+    /// - `prlctl exec <vm>` or an equivalent wrapper for Parallels.
+    /// - empty string when the command already runs in the remote environment.
     public var startCommand: String {
-        [
-            "tart exec \(Self.shellQuote(vmName))",
+        var parts: [String] = []
+        let trimmedPrefix = commandPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedPrefix.isEmpty {
+            parts.append(trimmedPrefix)
+        }
+        parts.append(contentsOf: [
             "ssh -N",
-            "-R 127.0.0.1:\(hostPort):127.0.0.1:\(guestSocksPort)",
+            "-R 127.0.0.1:\(hostPort):127.0.0.1:\(remoteSocksPort)",
             "-o IdentitiesOnly=yes",
             "-i \(Self.shellQuote(sshIdentityPath))",
             "-o ServerAliveInterval=15",
@@ -82,7 +89,8 @@ public struct TartReverseTunnelPreset: Hashable, Sendable {
             "-o ExitOnForwardFailure=yes",
             "-o StrictHostKeyChecking=accept-new",
             "\(Self.shellQuote(sshUser))@\(Self.shellQuote(hostBridgeIP))"
-        ].joined(separator: " ")
+        ])
+        return parts.joined(separator: " ")
     }
 
     /// POSIX-safe single-quote wrapper for shell command arguments.
