@@ -358,9 +358,9 @@ final class SettingsViewModel: ObservableObject {
     /// Shunt talks to host loopback, while a launcher entry creates a remote →
     /// host SSH forward and waits for proxied egress to differ from host direct
     /// egress before enabling the Network Extension. The generated command is
-    /// editable in the Launcher section; the default command prefix targets the
-    /// local Tart development VM, but production can replace it with Parallels,
-    /// plain SSH, launchd, or any other tunnel bootstrap.
+    /// editable in the Launcher section; the default command prefix targets a
+    /// local Tart development VM, but production can use any VM or remote-host
+    /// command that runs `ssh -R` from the machine that owns the SOCKS proxy.
     func applyReverseSSHTunnelPreset(
         commandPrefix: String = "tart exec tahoe-base",
         hostBridgeIP: String = "192.168.64.1",
@@ -375,8 +375,14 @@ final class SettingsViewModel: ObservableObject {
             remoteSocksPort: remoteSocksPort,
             sshIdentityPath: sshIdentityPath
         )
+        var launcher = settings.launcher
+        if launcher.stages.isEmpty {
+            launcher = preset.launcher
+        } else {
+            launcher.stages.append(contentsOf: preset.launcher.stages)
+        }
         settings.upstream = preset.upstream
-        settings.launcher = preset.launcher
+        settings.launcher = launcher
         save()
     }
 

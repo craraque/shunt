@@ -23,6 +23,58 @@ struct UpstreamTab: View {
         case error(String)
     }
 
+    private enum ReverseTunnelTemplate: CaseIterable, Identifiable {
+        case tart
+        case parallels
+        case plainSSH
+        case nestedSSH
+
+        var id: String { title }
+
+        var title: String {
+            switch self {
+            case .tart: return "Tart VM"
+            case .parallels: return "Parallels VM"
+            case .plainSSH: return "Plain SSH"
+            case .nestedSSH: return "Nested SSH / network host"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .tart, .parallels: return "desktopcomputer"
+            case .plainSSH: return "terminal"
+            case .nestedSSH: return "network"
+            }
+        }
+
+        /// Prefix run before the generated `ssh -N -R ...` command. These are
+        /// intentionally editable placeholders in the Launcher tab.
+        var commandPrefix: String {
+            switch self {
+            case .tart:
+                return "tart exec <vm-name>"
+            case .parallels:
+                return "prlctl exec \"<vm-name>\""
+            case .plainSSH:
+                return ""
+            case .nestedSSH:
+                return "ssh user@network-host"
+            }
+        }
+
+        /// Host address as seen from the machine that runs the generated SSH
+        /// command. Users should edit this in the Launcher entry if their VM or
+        /// network host sees the Mac at a different address.
+        var hostBridgeIP: String {
+            switch self {
+            case .tart: return "192.168.64.1"
+            case .parallels: return "10.211.55.2"
+            case .plainSSH, .nestedSSH: return "host.local"
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -70,17 +122,24 @@ struct UpstreamTab: View {
                         Text("Advanced SSH reverse tunnel template")
                             .font(.shuntLabel.weight(.medium))
                             .foregroundStyle(.white)
-                        Text("Sets upstream to `127.0.0.1:1080` and adds an editable `ssh -R` launcher with an egress-diff probe. Tart is only the default dev command; replace it with your VM or remote-host command for production. Launcher commands run in a shell, so edit only trusted commands.")
+                        Text("Sets upstream to `127.0.0.1:1080` and appends an editable `ssh -R` launcher stage with an egress-diff probe. Choose a starting template, then edit the generated command for your VM or remote host. Launcher commands run in a shell, so edit only trusted commands.")
                             .font(.shuntCaption)
                             .foregroundStyle(.white.opacity(0.62))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    Button {
-                        applyReverseSSHTunnelPreset()
+                    Menu {
+                        ForEach(ReverseTunnelTemplate.allCases) { template in
+                            Button {
+                                applyReverseSSHTunnelPreset(template)
+                            } label: {
+                                Label(template.title, systemImage: template.systemImage)
+                            }
+                        }
                     } label: {
                         Label("Add template", systemImage: "sparkles")
                     }
+                    .menuStyle(.button)
                     .buttonStyle(.bordered)
                     .tint(theme.accent(for: scheme))
                 }
@@ -254,8 +313,11 @@ struct UpstreamTab: View {
         .padding(.vertical, 10)
     }
 
-    private func applyReverseSSHTunnelPreset() {
-        model.applyReverseSSHTunnelPreset()
+    private func applyReverseSSHTunnelPreset(_ template: ReverseTunnelTemplate = .tart) {
+        model.applyReverseSSHTunnelPreset(
+            commandPrefix: template.commandPrefix,
+            hostBridgeIP: template.hostBridgeIP
+        )
         host = model.settings.upstream.host
         portText = String(model.settings.upstream.port)
         bindInterface = model.settings.upstream.bindInterface ?? ""
