@@ -44,10 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let seed = ShuntSettings(
                 managedApps: [
                     ManagedApp(bundleID: "com.craraque.shunt.test", displayName: "ShuntTest", enabled: true),
-                    ManagedApp(bundleID: "com.apple.Safari", displayName: "Safari", enabled: true),
-                    ManagedApp(bundleID: "com.apple.Terminal", displayName: "Terminal", enabled: false)
+                    ManagedApp(bundleID: "com.microsoft.teams2", displayName: "Microsoft Teams", enabled: true),
+                    ManagedApp(bundleID: "com.microsoft.Outlook", displayName: "Microsoft Outlook", enabled: true)
                 ],
-                upstream: UpstreamProxy(host: "127.0.0.1", port: 1080, bindInterface: nil)
+                upstream: UpstreamProxy(host: "10.211.55.5", port: 1080, bindInterface: "bridge100")
             )
             do {
                 try settingsStore.save(seed)
@@ -95,8 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.renderStatusIcon()
-            BundleIconUpdater.applyForCurrentTheme()
+            Task { @MainActor in
+                self?.renderStatusIcon()
+                BundleIconUpdater.applyForCurrentTheme()
+            }
         }
         // Initial paint of the bundle icon. Done after the status item is
         // up so first-launch ordering is: window/popover ready → bundle icon
@@ -108,8 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.renderStatusIcon()
-            self?.maybePromptForExternalReclaim()
+            Task { @MainActor in
+                self?.renderStatusIcon()
+                self?.maybePromptForExternalReclaim()
+            }
         }
         NSApp.addObserver(
             self,
@@ -118,7 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             context: nil
         )
         statusTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            self?.refreshStatus()
+            Task { @MainActor in
+                self?.refreshStatus()
+            }
         }
 
         if args.contains("--auto-enable") {

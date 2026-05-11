@@ -221,6 +221,17 @@ final class ProxyManager {
                         )))
                         return
                     }
+                    let extensionHealth = SystemExtensionManager.currentHealth()
+                    if extensionHealth.status == .updateRequired || extensionHealth.status == .awaitingUserApproval || extensionHealth.status == .restartRequired {
+                        let message = "Configuration saved. Live apply requires System Extension update (active \(extensionHealth.activeDisplay), bundled \(extensionHealth.bundledDisplay))."
+                        Log.error("applyRulesLive: \(message)")
+                        completion(.failure(NSError(
+                            domain: "Shunt.ProxyManager",
+                            code: 4,
+                            userInfo: [NSLocalizedDescriptionKey: message]
+                        )))
+                        return
+                    }
                     do {
                         let payload = try JSONEncoder().encode(settings)
                         try session.sendProviderMessage(payload) { reply in

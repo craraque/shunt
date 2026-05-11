@@ -10,6 +10,7 @@ import ShuntCore
 /// per entry transition, which becomes the pill label/colour here.
 struct UpstreamLauncherSection: View {
     @ObservedObject var model: SettingsViewModel
+    var templateMenu: AnyView? = nil
     @ObservedObject private var activity = ProxyActivity.shared
     @Environment(\.shuntTheme) private var theme
     @Environment(\.colorScheme) private var scheme
@@ -32,6 +33,9 @@ struct UpstreamLauncherSection: View {
                 Spacer()
                 if !activity.entries.isEmpty {
                     readyBadge
+                }
+                if let templateMenu {
+                    templateMenu
                 }
             }
             .padding(.bottom, 4)

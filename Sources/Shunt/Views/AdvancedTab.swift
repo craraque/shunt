@@ -274,7 +274,7 @@ struct AdvancedTab: View {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         // Build a minimal default settings, preserving theme via ActiveTheme.
-        var defaults = ShuntSettings.empty
+        let defaults = ShuntSettings.empty
         // Disable any running proxy first.
         Task {
             await AppServices.shared.proxyManager.disable()
@@ -285,6 +285,5 @@ struct AdvancedTab: View {
                 statusIsError = false
             }
         }
-        _ = defaults  // silence warning when async closure captures it
     }
 }

@@ -7,6 +7,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var settings: ShuntSettings
     @Published var lastError: String?
     @Published var testConnectionResult: String?
+    @Published var systemExtensionHealth: SystemExtensionHealth?
 
     private let store: SettingsStore
 
@@ -19,6 +20,25 @@ final class SettingsViewModel: ObservableObject {
     func reload() {
         settings = store.load()
         resolveMissingAppPaths()
+        refreshSystemExtensionHealth()
+    }
+
+    func refreshSystemExtensionHealth() {
+        DispatchQueue.global(qos: .utility).async {
+            let health = SystemExtensionManager.currentHealth()
+            DispatchQueue.main.async { [weak self] in
+                self?.systemExtensionHealth = health
+            }
+        }
+    }
+
+    func updateSystemExtension() {
+        AppServices.shared.extensionManager.activate()
+        refreshSystemExtensionHealth()
+    }
+
+    func openSystemExtensionSettings() {
+        SystemExtensionManager.openSystemExtensionSettings()
     }
 
     /// For any managed app that lacks an `appPath` (seeded entries or rows created

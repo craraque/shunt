@@ -1,5 +1,6 @@
 import SwiftUI
 import Darwin
+import ShuntCore
 
 struct UpstreamTab: View {
     @ObservedObject var model: SettingsViewModel
@@ -83,201 +84,18 @@ struct UpstreamTab: View {
                         .font(.system(size: 26, weight: .semibold))
                         .tracking(-0.65)
                         .foregroundStyle(.white)
-                    Text("The local SOCKS5 proxy claimed traffic is forwarded into.")
+                    Text("Forward matched app traffic to a SOCKS5 upstream.")
                         .font(.system(size: 13))
                         .foregroundStyle(.white.opacity(0.62))
                 }
 
-                LiquidSectionLabel(text: "SOCKS5 endpoint", theme: theme)
-                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
-                    VStack(spacing: 0) {
-                        liquidRow(label: "Host") {
-                            AnyView(
-                                TextField("127.0.0.1", text: $host)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 12.5, design: .monospaced))
-                                    .monospacedDigit()
-                                    .frame(width: 260)
-                            )
-                        }
-                        rowDivider
-                        liquidRow(label: "Port") {
-                            AnyView(
-                                TextField("1080", text: $portText)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 12.5, design: .monospaced))
-                                    .monospacedDigit()
-                                    .frame(width: 120)
-                            )
-                        }
-                    }
-                }
+                connectionSection
 
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
-                        .foregroundStyle(theme.accent(for: scheme))
-                        .font(.system(size: 17, weight: .semibold))
-                        .padding(.top, 1)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Advanced SSH reverse tunnel template")
-                            .font(.shuntLabel.weight(.medium))
-                            .foregroundStyle(.white)
-                        Text("Sets upstream to `127.0.0.1:1080` and appends an editable `ssh -R` launcher stage with an egress-diff probe. Choose a starting template, then edit the generated command for your VM or remote host. Launcher commands run in a shell, so edit only trusted commands.")
-                            .font(.shuntCaption)
-                            .foregroundStyle(.white.opacity(0.62))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Menu {
-                        ForEach(ReverseTunnelTemplate.allCases) { template in
-                            Button {
-                                applyReverseSSHTunnelPreset(template)
-                            } label: {
-                                Label(template.title, systemImage: template.systemImage)
-                            }
-                        }
-                    } label: {
-                        Label("Add template", systemImage: "sparkles")
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.bordered)
-                    .tint(theme.accent(for: scheme))
-                }
-                .padding(12)
-                .background(theme.accent(for: scheme).opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(theme.accent(for: scheme).opacity(0.25), lineWidth: 0.5)
-                )
-
-                LiquidSectionLabel(text: "Interface binding", theme: theme)
-                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
-                    liquidRow(label: "Bind to") {
-                        AnyView(
-                            Picker("", selection: $bindInterface) {
-                                Text("None (use routing table)").tag("")
-                                ForEach(availableInterfaces, id: \.self) { name in
-                                    Text(name).tag(name).font(.system(size: 12.5, design: .monospaced))
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(width: 260, alignment: .leading)
-                        )
-                    }
-                }
-
-                Text("Select an interface only when the upstream is unreachable via the primary NIC — e.g. a VM bridge or dedicated interface.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                LiquidSectionLabel(text: "DNS resolution", theme: theme)
-                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
-                    liquidRow(label: "Resolve via upstream") {
-                        AnyView(
-                            Toggle("", isOn: $useRemoteDNS)
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                                .tint(theme.accentDark)
-                        )
-                    }
-                }
-                Text("When ON, hostnames are forwarded in the SOCKS5 CONNECT (ATYP=0x03) so the upstream resolves them — recommended for hostname-based policies (upstream provider URL filtering, SNI matching) and to avoid leaking routed queries to your local DNS. Falls back to IP literal when the destination has no FQDN. Turn OFF only if your upstream rejects domain-name CONNECT.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                LiquidSectionLabel(text: "Authentication", theme: theme)
-                LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
-                    VStack(spacing: 0) {
-                        liquidRow(label: "Required") {
-                            AnyView(
-                                Toggle("", isOn: $authEnabled)
-                                    .toggleStyle(.switch)
-                                    .labelsHidden()
-                                    .tint(theme.accentDark)
-                            )
-                        }
-                        if authEnabled {
-                            rowDivider
-                            liquidRow(label: "Username") {
-                                AnyView(
-                                    TextField("user", text: $username)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(size: 12.5, design: .monospaced))
-                                        .frame(width: 220)
-                                )
-                            }
-                            rowDivider
-                            liquidRow(label: "Password") {
-                                AnyView(
-                                    SecureField("••••••••", text: $password)
-                                        .textFieldStyle(.roundedBorder)
-                                        .font(.system(size: 12.5, design: .monospaced))
-                                        .frame(width: 220)
-                                )
-                            }
-                        }
-                    }
-                }
-                Text("Most upstreams (3proxy, microsocks default) accept anonymous connections — leave OFF. Turn ON only if your SOCKS5 server requires user/pass per RFC 1929.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 8) {
-                    Button {
-                        apply()
-                    } label: {
-                        applyButtonLabel
-                            .frame(minWidth: 110)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(applyButtonTint)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(applyStatus == .applying)
-                    .animation(.easeInOut(duration: 0.18), value: applyStatus)
-
-                    Button("Test Connection") {
-                        apply()
-                        model.testConnection()
-                    }
-                    if case .error(let msg) = applyStatus {
-                        Text(msg)
-                            .font(.shuntCaption)
-                            .foregroundStyle(.orange)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .help(msg)
-                    }
-                    Spacer()
-                }
-
-                if let result = model.testConnectionResult {
-                    HStack(spacing: 8) {
-                        if result.contains("OK") {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(theme.statusActive(for: scheme))
-                        } else if result.hasPrefix("Testing") {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                        }
-                        Text(result)
-                            .font(.shuntMonoData)
-                            .foregroundStyle(result.contains("OK") ? theme.statusActive(for: scheme) : .secondary)
-                    }
-                    .padding(.top, 2)
-                }
+                actionStatusSection
 
                 Divider().padding(.vertical, 4)
 
-                UpstreamLauncherSection(model: model)
+                UpstreamLauncherSection(model: model, templateMenu: AnyView(reverseTunnelTemplateMenu))
             }
             .padding(28)
         }
@@ -290,7 +108,188 @@ struct UpstreamTab: View {
             authEnabled = !username.isEmpty || !password.isEmpty
             useRemoteDNS = model.settings.upstream.useRemoteDNS
             refreshInterfaces()
+            model.refreshSystemExtensionHealth()
         }
+    }
+
+    // MARK: - Layout sections
+
+    private var connectionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LiquidSectionLabel(text: "Connection", theme: theme)
+            LiquidCard(theme: theme, padding: EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)) {
+                VStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 18) {
+                        compactField(label: "Host") {
+                            TextField("127.0.0.1", text: $host)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12.5, design: .monospaced))
+                                .monospacedDigit()
+                                .frame(maxWidth: .infinity)
+                        }
+                        compactField(label: "Port", width: 96) {
+                            TextField("1080", text: $portText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12.5, design: .monospaced))
+                                .monospacedDigit()
+                                .frame(width: 96)
+                        }
+                    }
+                    .padding(.vertical, 8)
+
+                    rowDivider
+
+                    HStack(alignment: .top, spacing: 18) {
+                        compactField(label: "Bind interface") {
+                            Picker("", selection: $bindInterface) {
+                                Text("None / routing table").tag("")
+                                ForEach(availableInterfaces, id: \.self) { name in
+                                    Text(name).tag(name).font(.system(size: 12.5, design: .monospaced))
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help("Use only when the upstream is reachable through a specific NIC, such as a Parallels bridge.")
+                        }
+                        compactField(label: "DNS", width: 160) {
+                            Toggle("Resolve upstream", isOn: $useRemoteDNS)
+                                .toggleStyle(.switch)
+                                .tint(theme.accentDark)
+                        }
+                    }
+                    .padding(.vertical, 8)
+
+                    rowDivider
+
+                    VStack(spacing: 0) {
+                        HStack {
+                            Toggle("Authentication required", isOn: $authEnabled)
+                                .toggleStyle(.switch)
+                                .tint(theme.accentDark)
+                            Spacer()
+                            Text("Leave off for anonymous SOCKS5 upstreams.")
+                                .font(.shuntCaption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 8)
+
+                        if authEnabled {
+                            rowDivider
+                            HStack(alignment: .top, spacing: 18) {
+                                compactField(label: "Username") {
+                                    TextField("user", text: $username)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 12.5, design: .monospaced))
+                                }
+                                compactField(label: "Password") {
+                                    SecureField("••••••••", text: $password)
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.system(size: 12.5, design: .monospaced))
+                                }
+                            }
+                            .padding(.vertical, 8)
+                        }
+                    }
+                }
+            }
+            Text("Remote DNS sends hostnames in SOCKS5 CONNECT. Turn it off only if your upstream rejects domain-name CONNECT.")
+                .font(.shuntCaption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var actionStatusSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    apply()
+                } label: {
+                    applyButtonLabel.frame(minWidth: 110)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(applyButtonTint)
+                .keyboardShortcut(.defaultAction)
+                .disabled(applyStatus == .applying)
+                .animation(.easeInOut(duration: 0.18), value: applyStatus)
+
+                Button("Test Connection") {
+                    apply()
+                    model.testConnection()
+                }
+
+                Spacer()
+
+                if let health = model.systemExtensionHealth,
+                   health.status.requiresUserAction {
+                    Button(extensionActionTitle(for: health.status)) {
+                        performExtensionAction(for: health.status)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(theme.accent(for: scheme))
+                }
+            }
+
+            statusCard
+        }
+    }
+
+    private var reverseTunnelTemplateMenu: some View {
+        Menu {
+            ForEach(ReverseTunnelTemplate.allCases) { template in
+                Button {
+                    applyReverseSSHTunnelPreset(template)
+                } label: {
+                    Label(template.title, systemImage: template.systemImage)
+                }
+            }
+        } label: {
+            Label("Add SSH reverse tunnel", systemImage: "arrow.triangle.2.circlepath")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .tint(theme.accent(for: scheme))
+        .help("Creates an editable ssh -R launcher stage and sets upstream to 127.0.0.1:1080.")
+    }
+
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let result = model.testConnectionResult {
+                statusRow(
+                    icon: result.contains("OK") ? "checkmark.circle.fill" : result.hasPrefix("Testing") ? "clock" : "exclamationmark.triangle.fill",
+                    title: "SOCKS5 upstream",
+                    detail: result,
+                    color: result.contains("OK") ? theme.statusActive(for: scheme) : .orange
+                )
+            }
+
+            statusRow(
+                icon: applyStatusIcon,
+                title: "Extension apply",
+                detail: applyStatusDetail,
+                color: applyStatusColor
+            )
+
+            if let health = model.systemExtensionHealth {
+                statusRow(
+                    icon: extensionStatusIcon(health.status),
+                    title: "System Extension",
+                    detail: "\(health.status.title). \(health.detail)",
+                    color: extensionStatusColor(health.status),
+                    actions: {
+                        if health.status.requiresUserAction {
+                            Button(extensionActionTitle(for: health.status)) { performExtensionAction(for: health.status) }
+                                .buttonStyle(.bordered)
+                            Button("Settings") { model.openSystemExtensionSettings() }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                )
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
     }
 
     // MARK: - Helpers
@@ -311,6 +310,122 @@ struct UpstreamTab: View {
             Spacer()
         }
         .padding(.vertical, 10)
+    }
+
+    private func compactField<Content: View>(label: String, width: CGFloat? = nil, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.shuntCaption.weight(.medium))
+                .foregroundStyle(.secondary)
+            content()
+        }
+        .frame(width: width, alignment: .leading)
+    }
+
+    private func statusRow<Actions: View>(
+        icon: String,
+        title: String,
+        detail: String,
+        color: Color,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        HStack(alignment: .center, spacing: 9) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 16)
+            Text(title)
+                .font(.shuntCaption.weight(.medium))
+                .frame(width: 120, alignment: .leading)
+            Text(detail)
+                .font(.shuntCaption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .help(detail)
+            Spacer(minLength: 8)
+            actions()
+        }
+    }
+
+    private func statusRow(
+        icon: String,
+        title: String,
+        detail: String,
+        color: Color
+    ) -> some View {
+        statusRow(icon: icon, title: title, detail: detail, color: color) { EmptyView() }
+    }
+
+    private var applyStatusIcon: String {
+        switch applyStatus {
+        case .idle: return "circle"
+        case .applying: return "clock"
+        case .ok: return "checkmark.circle.fill"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var applyStatusDetail: String {
+        switch applyStatus {
+        case .idle:
+            return "No live changes applied yet."
+        case .applying:
+            return "Saving configuration and pushing live rules to the extension…"
+        case .ok:
+            return "Configuration saved and applied live."
+        case .error(let msg):
+            if msg == "<no reply>" {
+                return "Configuration saved, but the Network Extension did not reply. Update the extension or reload the tunnel."
+            }
+            return msg
+        }
+    }
+
+    private var applyStatusColor: Color {
+        switch applyStatus {
+        case .idle: return .secondary
+        case .applying: return theme.accent(for: scheme)
+        case .ok: return theme.statusActive(for: scheme)
+        case .error: return .orange
+        }
+    }
+
+    private func extensionStatusIcon(_ status: SystemExtensionCompatibilityStatus) -> String {
+        switch status {
+        case .compatible: return "checkmark.circle.fill"
+        case .updateAvailable: return "arrow.up.circle.fill"
+        case .updateRequired, .awaitingUserApproval, .restartRequired, .notInstalled, .bundledMissing, .unknown: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func extensionStatusColor(_ status: SystemExtensionCompatibilityStatus) -> Color {
+        switch status {
+        case .compatible: return theme.statusActive(for: scheme)
+        case .updateAvailable: return theme.accent(for: scheme)
+        case .updateRequired, .awaitingUserApproval, .restartRequired, .notInstalled, .bundledMissing, .unknown: return .orange
+        }
+    }
+
+    private func extensionActionTitle(for status: SystemExtensionCompatibilityStatus) -> String {
+        switch status {
+        case .awaitingUserApproval:
+            return "Open Settings"
+        case .restartRequired:
+            return "Restart Required"
+        case .updateAvailable, .updateRequired:
+            return "Update Extension"
+        case .notInstalled, .bundledMissing, .unknown, .compatible:
+            return "Activate"
+        }
+    }
+
+    private func performExtensionAction(for status: SystemExtensionCompatibilityStatus) {
+        switch status {
+        case .awaitingUserApproval, .restartRequired:
+            model.openSystemExtensionSettings()
+        case .updateAvailable, .updateRequired, .notInstalled, .bundledMissing, .unknown, .compatible:
+            model.updateSystemExtension()
+        }
     }
 
     private func applyReverseSSHTunnelPreset(_ template: ReverseTunnelTemplate = .tart) {
@@ -361,6 +476,7 @@ struct UpstreamTab: View {
                 case .failure(let error):
                     applyStatus = .error(error.localizedDescription)
                 }
+                model.refreshSystemExtensionHealth()
                 applyResetTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     if !Task.isCancelled { applyStatus = .idle }

@@ -10,14 +10,9 @@ MAIN_BUNDLE_ID="com.craraque.shunt"
 EXT_BUNDLE_ID="com.craraque.shunt.proxy"
 EXT_BUNDLE_NAME="$EXT_BUNDLE_ID.systemextension"
 
-TEAM_ID="${SHUNT_TEAM_ID:-6NSZVJU6BP}"
-SIGN_IDENTITY="${SHUNT_SIGN_IDENTITY:-}"
-NOTARY_PROFILE="${SHUNT_NOTARY_PROFILE:-DeveloperIDNotaryProfile}"
-
-if [[ -z "$SIGN_IDENTITY" ]]; then
-    echo "ERROR: set SHUNT_SIGN_IDENTITY to your Developer ID Application signing identity"
-    exit 1
-fi
+TEAM_ID="6NSZVJU6BP"
+SIGN_IDENTITY="Developer ID Application: CESAR RAUL ARAQUE BLANCO ($TEAM_ID)"
+NOTARY_PROFILE="ShuntNotary"
 
 MAIN_PROFILE="$PROJECT_DIR/Resources/profiles/Shunt_Developer_ID.provisionprofile"
 EXT_PROFILE="$PROJECT_DIR/Resources/profiles/Shunt_Proxy_Developer_ID.provisionprofile"
@@ -69,6 +64,12 @@ fi
 echo "▸ Version $SHORT_VERSION build $BUILD_NUMBER"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$EXT_PATH/Contents/Info.plist"
+# Only bump this when the app requires a newer provider runtime/protocol.
+# Leave it unchanged for app-only UI/updater changes so macOS does not prompt
+# for an unnecessary System Extension replacement.
+if [[ -n "${MIN_REQUIRED_EXTENSION_BUILD:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :ShuntMinimumRequiredExtensionBuild $MIN_REQUIRED_EXTENSION_BUILD" "$APP_BUNDLE/Contents/Info.plist"
+fi
 
 echo "▸ Embedding provisioning profiles"
 cp "$MAIN_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
