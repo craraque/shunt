@@ -5,6 +5,8 @@ struct GeneralTab: View {
     @ObservedObject var model: SettingsViewModel
     @ObservedObject private var activity = ProxyActivity.shared
     @State private var statusRaw: Int = 0
+    @State private var systemExtensionActivated: Bool = false
+    @State private var lastSystemExtensionStatusCheck: Date? = nil
     @State private var reloadStatus: ReloadStatus = .idle
     @State private var reloadResetTask: Task<Void, Never>?
 
@@ -349,7 +351,7 @@ struct GeneralTab: View {
 
     private var isRouting: Bool { statusRaw == 3 }
     private var isConnecting: Bool { statusRaw == 2 || statusRaw == 4 }
-    private var extensionInstalled: Bool { statusRaw != 0 }
+    private var extensionInstalled: Bool { systemExtensionActivated || statusRaw != 0 }
 
     private var statusTitle: String {
         if isRouting {
@@ -402,6 +404,14 @@ struct GeneralTab: View {
     private func refresh() {
         Task { @MainActor in
             let raw = await services.proxyManager.statusRaw()
+            let shouldCheckSystemExtension: Bool = {
+                guard let lastSystemExtensionStatusCheck else { return true }
+                return Date().timeIntervalSince(lastSystemExtensionStatusCheck) >= 5
+            }()
+            if shouldCheckSystemExtension {
+                systemExtensionActivated = SystemExtensionManager.isActivatedInSystemExtensions()
+                lastSystemExtensionStatusCheck = Date()
+            }
             let wasRouting = (statusRaw == 3)
             let isRoutingNow = (raw == 3)
             statusRaw = raw
