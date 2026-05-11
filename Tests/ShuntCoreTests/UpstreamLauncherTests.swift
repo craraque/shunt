@@ -25,6 +25,15 @@ final class UpstreamLauncherTests: XCTestCase {
         XCTAssertNil(entry.stopCommand)
     }
 
+    func testShellCommandNormalizationReplacesSmartPunctuation() {
+        let raw = "/usr/local/bin/prlctl suspend \u{201C}macOS\u{201D} && echo \u{2018}done\u{2019} \u{2013}\u{2014} flag\u{00A0}value"
+
+        XCTAssertEqual(
+            raw.normalizingShellPunctuation(),
+            "/usr/local/bin/prlctl suspend \"macOS\" && echo 'done' -- flag value"
+        )
+    }
+
     // MARK: - allEntries flattens stages in order
 
     func testAllEntriesPreservesOrder() {
