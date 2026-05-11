@@ -15,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.4.4</string>
+	<string>0.4.5</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
@@ -26,5 +26,7 @@
 	<string>Made by Cesar Araque</string>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>Shunt uses a system extension to route network traffic from user-selected apps through a configurable upstream proxy.</string>
+	<key>ShuntMinimumRequiredExtensionBuild</key>
+	<integer>0</integer>
 </dict>
 </plist>

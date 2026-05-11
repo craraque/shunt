@@ -123,21 +123,19 @@ struct GeneralTab: View {
                 LiquidCard(theme: theme, padding: EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18)) {
                     VStack(spacing: 0) {
                         liquidRow(label: "Status", trailing: {
-                            AnyView(
-                                LiquidPill(
-                                    text: extensionInstalled ? "activated" : "not installed",
-                                    dot: extensionInstalled,
-                                    kind: extensionInstalled ? .active : .neutral,
-                                    theme: theme
-                                )
-                            )
+                            AnyView(systemExtensionStatusView)
+                        })
+                        rowDivider
+                        liquidRow(label: "Version", trailing: {
+                            AnyView(monoText(systemExtensionVersionSummary))
                         })
                         rowDivider
                         liquidRow(label: "Manage", trailing: {
                             AnyView(
                                 HStack(spacing: 6) {
-                                    Button("Activate") { services.extensionManager.activate() }
-                                    Button("Deactivate") { services.extensionManager.deactivate() }
+                                    Button(systemExtensionPrimaryActionTitle) { performSystemExtensionPrimaryAction() }
+                                    Button("Settings") { model.openSystemExtensionSettings() }
+                                    Button("Deactivate") { services.extensionManager.deactivate(); model.refreshSystemExtensionHealth() }
                                 }
                             )
                         })
@@ -399,6 +397,65 @@ struct GeneralTab: View {
         return "\(host):\(port)"
     }
 
+    private var systemExtensionStatusView: some View {
+        let health = model.systemExtensionHealth
+        let status = health?.status
+        let text: String = status?.title.replacingOccurrences(of: "System Extension ", with: "")
+            ?? (extensionInstalled ? "activated" : "not installed")
+        let kind: LiquidPillKind = {
+            switch status {
+            case .compatible: return .active
+            case .updateAvailable, .updateRequired, .awaitingUserApproval, .restartRequired, .notInstalled, .bundledMissing, .unknown: return .warn
+            case .none: return extensionInstalled ? .active : .neutral
+            }
+        }()
+        return HStack(spacing: 8) {
+            LiquidPill(text: text.lowercased(), dot: kind == .active, kind: kind, theme: theme)
+            if let detail = health?.detail {
+                Text(detail)
+                    .font(.shuntCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(detail)
+            }
+        }
+    }
+
+    private var systemExtensionVersionSummary: String {
+        guard let health = model.systemExtensionHealth else { return "checking…" }
+        return "active \(health.activeDisplay) · bundled \(health.bundledDisplay)"
+    }
+
+    private var systemExtensionPrimaryActionTitle: String {
+        guard let status = model.systemExtensionHealth?.status else { return "Activate" }
+        switch status {
+        case .updateAvailable, .updateRequired:
+            return "Update Extension"
+        case .awaitingUserApproval:
+            return "Open Settings"
+        case .restartRequired:
+            return "Restart Required"
+        case .notInstalled, .bundledMissing, .unknown, .compatible:
+            return "Activate"
+        }
+    }
+
+    private func performSystemExtensionPrimaryAction() {
+        guard let status = model.systemExtensionHealth?.status else {
+            services.extensionManager.activate()
+            model.refreshSystemExtensionHealth()
+            return
+        }
+        switch status {
+        case .awaitingUserApproval, .restartRequired:
+            model.openSystemExtensionSettings()
+        case .updateAvailable, .updateRequired, .notInstalled, .bundledMissing, .unknown, .compatible:
+            services.extensionManager.activate()
+            model.refreshSystemExtensionHealth()
+        }
+    }
+
     // MARK: - Actions
 
     private func refresh() {
@@ -410,6 +467,7 @@ struct GeneralTab: View {
             }()
             if shouldCheckSystemExtension {
                 systemExtensionActivated = SystemExtensionManager.isActivatedInSystemExtensions()
+                model.refreshSystemExtensionHealth()
                 lastSystemExtensionStatusCheck = Date()
             }
             let wasRouting = (statusRaw == 3)

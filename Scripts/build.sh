@@ -64,6 +64,12 @@ fi
 echo "▸ Version $SHORT_VERSION build $BUILD_NUMBER"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$EXT_PATH/Contents/Info.plist"
+# Only bump this when the app requires a newer provider runtime/protocol.
+# Leave it unchanged for app-only UI/updater changes so macOS does not prompt
+# for an unnecessary System Extension replacement.
+if [[ -n "${MIN_REQUIRED_EXTENSION_BUILD:-}" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :ShuntMinimumRequiredExtensionBuild $MIN_REQUIRED_EXTENSION_BUILD" "$APP_BUNDLE/Contents/Info.plist"
+fi
 
 echo "▸ Embedding provisioning profiles"
 cp "$MAIN_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"

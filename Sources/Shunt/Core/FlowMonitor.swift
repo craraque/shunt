@@ -69,12 +69,12 @@ final class FlowMonitor: ObservableObject {
         "AND (eventMessage CONTAINS \"CLAIM\" OR eventMessage CONTAINS \"SKIP\")"
 
     /// Regex matching `CLAIM <bundleID> → <host>:<port> (endpoint=<ip>)`.
-    private static let claimRegex: NSRegularExpression? = try? NSRegularExpression(
+    private nonisolated static let claimRegex: NSRegularExpression? = try? NSRegularExpression(
         pattern: #"CLAIM\s+(\S+)\s+→\s+([^:\s]+):(\d+)\s+\(endpoint=([^)]+)\)"#
     )
 
     /// Regex matching `SKIP source=<bundleID> endpoint=<ip>:<port> — no rule matched`.
-    private static let skipRegex: NSRegularExpression? = try? NSRegularExpression(
+    private nonisolated static let skipRegex: NSRegularExpression? = try? NSRegularExpression(
         pattern: #"SKIP\s+source=(\S+)\s+endpoint=([^:\s]+):(\d+)"#
     )
 
@@ -112,18 +112,15 @@ final class FlowMonitor: ObservableObject {
                     let parsed = Self.parseLine(line)
                     switch parsed {
                     case .claim(let event):
-                        await MainActor.run { self?.append(event) }
+                        await self?.append(event)
                     case .skip:
-                        await MainActor.run { self?.directCount &+= 1 }
+                        await self?.incrementDirectCount()
                     case .none:
                         continue
                     }
                 }
             } catch {
-                await MainActor.run {
-                    self?.lastError = "Log stream ended: \(error.localizedDescription)"
-                    self?.isStreaming = false
-                }
+                await self?.markStreamEnded(error.localizedDescription)
             }
         }
     }
@@ -148,6 +145,15 @@ final class FlowMonitor: ObservableObject {
         }
         upsertConnection(for: event)
         routedCount &+= 1
+    }
+
+    private func incrementDirectCount() {
+        directCount &+= 1
+    }
+
+    private func markStreamEnded(_ message: String) {
+        lastError = "Log stream ended: \(message)"
+        isStreaming = false
     }
 
     private func upsertConnection(for event: FlowEvent) {
