@@ -20,7 +20,7 @@ public struct UpstreamProxy: Codable, Hashable {
     public var host: String
     public var port: UInt16
     /// nil = use the host's default routing table. Set to an interface name
-    /// (e.g. "" for Parallels shared network) to bind to the requested interface and avoid NECP default-interface scoping
+    /// (e.g. "bridge100" for Parallels shared network) to bypass NECP scoping
     /// and force traffic out a specific NIC. Required when the proxy lives
     /// on a virtual bridge not reachable via the primary interface.
     public var bindInterface: String?
@@ -33,7 +33,7 @@ public struct UpstreamProxy: Codable, Hashable {
 
     /// Phase 7 — when true, SOCKS5 CONNECT requests use ATYP=0x03 (domain
     /// name) for FQDN destinations, deferring DNS resolution to the upstream
-    /// proxy. Improves hostname-based filtering at the upstream (upstream provider URL
+    /// proxy. Improves hostname-based filtering at the upstream (Zscaler URL
     /// policy, SNI matching) and avoids DNS leaks of routed hostnames to the
     /// host's local resolvers.
     ///
@@ -230,18 +230,27 @@ public struct UpstreamLauncher: Codable, Hashable {
 
 /// How the engine decides an entry is "ready". The first two modes only look
 /// at the upstream socket; the last two validate the end-to-end egress path
-/// (upstream client auth gate, geo-shift proxy, etc.).
+/// (ZCC auth gate, geo-shift proxy, etc.).
 public enum HealthProbe: Codable, Hashable {
     /// TCP connect to `upstream.host:upstream.port`. Fast, no false negatives
-    /// on the happy path, but false-positive during the "daemon up, upstream client auth
+    /// on the happy path, but false-positive during the "daemon up, ZCC auth
     /// pending" window.
     case portOpen
     /// TCP connect + SOCKS5 greeting exchange (`05 01 00` → `05 00`). Proves a
     /// SOCKS5 server is answering; still doesn't validate upstream egress.
     case socks5Handshake
+    /// TCP connect to an explicit host/port. Use for prerequisite readiness
+    /// that is not the final upstream socket (for example VM SSH on :22).
+    case tcpConnect(host: String, port: UInt16)
+    /// SOCKS5 greeting against an explicit host/port. Use when a launcher stage
+    /// exposes a local tunnel before the global upstream is fully switched.
+    case socks5HandshakeAt(host: String, port: UInt16)
+    /// Run a shell command and pass only when it exits 0. Useful for VM-ready
+    /// checks such as `prlctl exec "VM" /usr/bin/true`.
+    case commandExitZero(command: String)
     /// Fetch `probeURL` through the upstream SOCKS5 proxy, parse the body as
     /// an IP string, and match against `cidr`. Use when the expected egress
-    /// range is known (e.g. upstream provider `203.0.113.0/24`).
+    /// range is known.
     case egressCidrMatch(cidr: String, probeURL: URL)
     /// Fetch `probeURL` twice — once direct, once through the upstream SOCKS5 —
     /// and pass only when the two IPs differ. CIDR-free, works for any
@@ -259,7 +268,7 @@ public struct HostPattern: Codable, Hashable, Identifiable {
     public var id: UUID
     public enum Kind: String, Codable, CaseIterable, Hashable {
         case exact    // "teams.microsoft.com" — exact hostname match (case-insensitive)
-        case suffix   // "*.example.com" — matches "a.b.example.com" and "example.com"
+        case suffix   // "*.corp.com" — matches "a.b.corp.com" and "corp.com"
         case cidr     // "10.0.0.0/8" — destination IP match (v4 or v6)
     }
     public var kind: Kind

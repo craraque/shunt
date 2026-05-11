@@ -223,6 +223,45 @@ final class UpstreamLauncherEngineTests: XCTestCase {
         XCTAssertTrue(snap.isEmpty, "runtimes not cleared after stopAll; got \(snap)")
     }
 
+    // MARK: - Custom probes
+
+    func testExplicitTCPProbeIgnoresGlobalUpstream() async throws {
+        let (fd, port) = try openLoopbackListener()
+        defer { close(fd) }
+
+        let result = await LauncherProbes.run(
+            .tcpConnect(host: "127.0.0.1", port: port),
+            upstream: UpstreamProxy(host: "127.0.0.1", port: port &+ 1)
+        )
+
+        XCTAssertTrue(result.ok, "expected explicit TCP probe to pass; got \(result.detail)")
+    }
+
+    func testCommandExitZeroProbe() async throws {
+        let ok = await LauncherProbes.run(
+            .commandExitZero(command: "/usr/bin/true"),
+            upstream: UpstreamProxy()
+        )
+        XCTAssertTrue(ok.ok, "expected true command probe to pass; got \(ok.detail)")
+
+        let fail = await LauncherProbes.run(
+            .commandExitZero(command: "/usr/bin/false"),
+            upstream: UpstreamProxy()
+        )
+        XCTAssertFalse(fail.ok, "expected false command probe to fail")
+    }
+
+    func testHealthProbeCodableRoundTripForCustomProbes() throws {
+        let probes: [HealthProbe] = [
+            .tcpConnect(host: "192.0.2.10", port: 22),
+            .socks5HandshakeAt(host: "127.0.0.1", port: 1080),
+            .commandExitZero(command: "/usr/local/bin/prlctl exec \"macOS\" /usr/bin/true"),
+        ]
+        let data = try JSONEncoder().encode(probes)
+        let decoded = try JSONDecoder().decode([HealthProbe].self, from: data)
+        XCTAssertEqual(decoded, probes)
+    }
+
     // MARK: - Helpers
 
     /// Bind a TCP socket to `127.0.0.1:0` (kernel picks port) and start
