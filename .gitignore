@@ -1,0 +1,22 @@
+.build/
+.swiftpm/
+build/
+*.xcodeproj
+.DS_Store
+Package.resolved
+.deploy.env
+Scripts/.build-number
+.claude/
+.gstack/
+logs/
+*.zip
+# Claude Code local/private context
+.claude/CLAUDE.local.md
+.claude/notes/private/
+.claude/private/
+.claude/settings.local.json
+
+# Apple signing assets are local-only
+Resources/profiles/
+*.provisionprofile
+*.p12

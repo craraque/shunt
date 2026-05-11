@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 160 160">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2B2A28"/>
+      <stop offset="1" stop-color="#1A1A19"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="160" rx="36" fill="url(#bg)"/>
+
+  <!-- ShuntTest: same geometry as Shunt, Chassis palette (silver + cyan)
+       to visually distinguish the diagnostic CLI from the production app. -->
+
+  <!-- Top rail (main line) — receded -->
+  <line x1="22" y1="76" x2="138" y2="76"
+        stroke="#F2F1EE" stroke-width="7" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Top rail ties (subtle) -->
+  <g opacity="0.18" fill="#F2F1EE">
+    <rect x="30" y="68" width="3" height="16" rx="1"/>
+    <rect x="50" y="68" width="3" height="16" rx="1"/>
+    <rect x="90" y="68" width="3" height="16" rx="1"/>
+    <rect x="110" y="68" width="3" height="16" rx="1"/>
+    <rect x="130" y="68" width="3" height="16" rx="1"/>
+  </g>
+
+  <!-- Bottom rail (diverted) — silver accent -->
+  <line x1="22" y1="104" x2="138" y2="104"
+        stroke="#E5E5E4" stroke-width="7" stroke-linecap="round"/>
+
+  <!-- Bottom rail ties -->
+  <g opacity="0.35" fill="#E5E5E4">
+    <rect x="30" y="96" width="3" height="16" rx="1"/>
+    <rect x="50" y="96" width="3" height="16" rx="1"/>
+    <rect x="90" y="96" width="3" height="16" rx="1"/>
+    <rect x="110" y="96" width="3" height="16" rx="1"/>
+    <rect x="130" y="96" width="3" height="16" rx="1"/>
+  </g>
+
+  <!-- Switch diagonal — silver -->
+  <line x1="60" y1="76" x2="78" y2="104"
+        stroke="#E5E5E4" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- Switch-point dot -->
+  <circle cx="69" cy="90" r="7" fill="#E5E5E4"/>
+  <circle cx="69" cy="90" r="3" fill="#F5F5F4"/>
+
+  <!-- Terminus cap — cyan diagnostic signal -->
+  <circle cx="138" cy="104" r="6" fill="#22D3EE"/>
+  <circle cx="138" cy="104" r="2.5" fill="#A5F3FC"/>
+
+  <!-- Diagnostic/test marker: small corner tick so a quick glance tells prod
+       from test even when both icons are tiny. Monospace T, bottom-left. -->
+  <text x="18" y="148" font-family="SF Mono, Menlo, monospace" font-size="14"
+        font-weight="600" fill="#22D3EE" opacity="0.85">T</text>
+</svg>
