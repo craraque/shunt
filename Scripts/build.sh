@@ -10,9 +10,10 @@ MAIN_BUNDLE_ID="com.craraque.shunt"
 EXT_BUNDLE_ID="com.craraque.shunt.proxy"
 EXT_BUNDLE_NAME="$EXT_BUNDLE_ID.systemextension"
 
-TEAM_ID="6NSZVJU6BP"
-SIGN_IDENTITY="Developer ID Application: CESAR RAUL ARAQUE BLANCO ($TEAM_ID)"
-NOTARY_PROFILE="ShuntNotary"
+TEAM_ID="${SHUNT_TEAM_ID:-6NSZVJU6BP}"
+SIGN_IDENTITY="${SHUNT_SIGN_IDENTITY:-Developer ID Application: CESAR RAUL ARAQUE BLANCO ($TEAM_ID)}"
+NOTARY_PROFILE="${SHUNT_NOTARY_PROFILE:-ShuntNotary}"
+NOTARY_KEYCHAIN="${SHUNT_NOTARY_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 
 MAIN_PROFILE="$PROJECT_DIR/Resources/profiles/Shunt_Developer_ID.provisionprofile"
 EXT_PROFILE="$PROJECT_DIR/Resources/profiles/Shunt_Proxy_Developer_ID.provisionprofile"
@@ -110,6 +111,7 @@ if [[ "$MODE" == "notarize" ]]; then
     echo "▸ Submitting to Apple notary service (this takes 1-5 min)"
     xcrun notarytool submit "$ZIP_PATH" \
         --keychain-profile "$NOTARY_PROFILE" \
+        --keychain "$NOTARY_KEYCHAIN" \
         --wait
 
     echo "▸ Stapling ticket"
