@@ -239,9 +239,18 @@ public enum HealthProbe: Codable, Hashable {
     /// TCP connect + SOCKS5 greeting exchange (`05 01 00` → `05 00`). Proves a
     /// SOCKS5 server is answering; still doesn't validate upstream egress.
     case socks5Handshake
+    /// TCP connect to an explicit host/port. Use for prerequisite readiness
+    /// that is not the final upstream socket (for example VM SSH on :22).
+    case tcpConnect(host: String, port: UInt16)
+    /// SOCKS5 greeting against an explicit host/port. Use when a launcher stage
+    /// exposes a local tunnel before the global upstream is fully switched.
+    case socks5HandshakeAt(host: String, port: UInt16)
+    /// Run a shell command and pass only when it exits 0. Useful for VM-ready
+    /// checks such as `prlctl exec "VM" /usr/bin/true`.
+    case commandExitZero(command: String)
     /// Fetch `probeURL` through the upstream SOCKS5 proxy, parse the body as
     /// an IP string, and match against `cidr`. Use when the expected egress
-    /// range is known (e.g. Zscaler `136.226.0.0/16`).
+    /// range is known.
     case egressCidrMatch(cidr: String, probeURL: URL)
     /// Fetch `probeURL` twice — once direct, once through the upstream SOCKS5 —
     /// and pass only when the two IPs differ. CIDR-free, works for any

@@ -335,8 +335,11 @@ struct UpstreamLauncherSection: View {
     private func probeBadge(for probe: HealthProbe) -> some View {
         let label: String = {
             switch probe {
-            case .portOpen: return "port open"
-            case .socks5Handshake: return "socks5"
+            case .portOpen: return "upstream tcp"
+            case .socks5Handshake: return "upstream socks5"
+            case .tcpConnect: return "custom tcp"
+            case .socks5HandshakeAt: return "custom socks5"
+            case .commandExitZero: return "command"
             case .egressCidrMatch: return "cidr"
             case .egressDiffersFromDirect: return "egress differs"
             }

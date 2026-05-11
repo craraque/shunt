@@ -30,6 +30,12 @@ public enum LauncherProbes {
             return await portOpen(host: upstream.host, port: upstream.port, timeout: connectTimeout)
         case .socks5Handshake:
             return await socks5Handshake(host: upstream.host, port: upstream.port, timeout: connectTimeout)
+        case .tcpConnect(let host, let port):
+            return await portOpen(host: host, port: port, timeout: connectTimeout)
+        case .socks5HandshakeAt(let host, let port):
+            return await socks5Handshake(host: host, port: port, timeout: connectTimeout)
+        case .commandExitZero(let command):
+            return await commandExitZero(command: command, timeout: connectTimeout)
         case .egressCidrMatch(let cidr, let probeURL):
             return await egressCidrMatch(upstream: upstream, cidr: cidr, probeURL: probeURL)
         case .egressDiffersFromDirect(let probeURL):
@@ -137,6 +143,52 @@ public enum LauncherProbes {
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 finish(ProbeResult(ok: false, detail: "timeout after \(timeout)s"))
+            }
+        }
+    }
+
+    // MARK: - commandExitZero
+
+    /// Runs `command` through the user's login shell and returns OK only when
+    /// it exits 0. Output is discarded; callers get a compact status detail.
+    public static func commandExitZero(command: String, timeout: TimeInterval = 5.0) async -> ProbeResult {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ProbeResult(ok: false, detail: "empty command")
+        }
+
+        return await withCheckedContinuation { cont in
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            task.arguments = ["-l", "-c", trimmed]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+
+            let handled = AtomicBool()
+            @Sendable func finish(_ result: ProbeResult) {
+                guard handled.compareAndSet(expected: false, new: true) else { return }
+                if task.isRunning { task.terminate() }
+                cont.resume(returning: result)
+            }
+
+            task.terminationHandler = { proc in
+                if proc.terminationStatus == 0 {
+                    finish(ProbeResult(ok: true, detail: "command exited 0"))
+                } else {
+                    finish(ProbeResult(ok: false, detail: "command exited \(proc.terminationStatus)"))
+                }
+            }
+
+            do {
+                try task.run()
+            } catch {
+                finish(ProbeResult(ok: false, detail: "spawn failed: \(error.localizedDescription)"))
+                return
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                finish(ProbeResult(ok: false, detail: "command timeout after \(timeout)s"))
             }
         }
     }
