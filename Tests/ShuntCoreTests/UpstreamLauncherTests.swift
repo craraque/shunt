@@ -25,6 +25,15 @@ final class UpstreamLauncherTests: XCTestCase {
         XCTAssertNil(entry.stopCommand)
     }
 
+    func testShellCommandNormalizationReplacesSmartPunctuation() {
+        let raw = "/usr/local/bin/prlctl suspend \u{201C}macOS\u{201D} && echo \u{2018}done\u{2019} \u{2013}\u{2014} flag\u{00A0}value"
+
+        XCTAssertEqual(
+            raw.normalizingShellPunctuation(),
+            "/usr/local/bin/prlctl suspend \"macOS\" && echo 'done' -- flag value"
+        )
+    }
+
     // MARK: - allEntries flattens stages in order
 
     func testAllEntriesPreservesOrder() {
@@ -81,8 +90,8 @@ final class UpstreamLauncherTests: XCTestCase {
     func testCodableRoundTripPopulatedLauncher() throws {
         let entry1 = UpstreamLauncherEntry(
             name: "Tart VM",
-            startCommand: "tart run --no-graphics proxy-vm",
-            stopCommand: "tart stop proxy-vm",
+            startCommand: "tart run --no-graphics mac-zscaler-test",
+            stopCommand: "tart stop mac-zscaler-test",
             healthProbe: .egressDiffersFromDirect(probeURL: HealthProbe.defaultProbeURL),
             startTimeoutSeconds: 90
         )
@@ -120,7 +129,7 @@ final class UpstreamLauncherTests: XCTestCase {
 
     func testHealthProbeCodableEgressCidrMatch() throws {
         try assertProbeRoundTrip(.egressCidrMatch(
-            cidr: "203.0.113.0/24",
+            cidr: "136.226.0.0/16",
             probeURL: URL(string: "https://ifconfig.me/ip")!
         ))
     }

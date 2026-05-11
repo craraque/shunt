@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ShuntCore
 
 /// Modal sheet for editing a single `UpstreamLauncherEntry`. Liquid glass
@@ -229,7 +230,7 @@ struct LauncherEntryEditor: View {
                         Text("Start command")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.white.opacity(0.62))
-                        TextEditor(text: $draft.startCommand)
+                        ShellCommandEditor(text: $draft.startCommand)
                             .font(.system(size: 12.5, design: .monospaced))
                             .frame(minHeight: 54)
                             .scrollContentBackground(.hidden)
@@ -247,7 +248,7 @@ struct LauncherEntryEditor: View {
                         Text("Stop command (optional)")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.white.opacity(0.62))
-                        TextEditor(text: Binding(
+                        ShellCommandEditor(text: Binding(
                             get: { draft.stopCommand ?? "" },
                             set: { draft.stopCommand = $0.isEmpty ? nil : $0 }
                         ))
@@ -355,7 +356,7 @@ struct LauncherEntryEditor: View {
                             Text("Probe command")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(.white.opacity(0.62))
-                            TextEditor(text: $probeCommand)
+                            ShellCommandEditor(text: $probeCommand)
                                 .font(.system(size: 12.5, design: .monospaced))
                                 .frame(minHeight: 54)
                                 .scrollContentBackground(.hidden)
@@ -493,9 +494,13 @@ struct LauncherEntryEditor: View {
 
     private func persistAndDismiss() {
         draft.name = draft.name.trimmingCharacters(in: .whitespaces)
-        draft.startCommand = draft.startCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft.startCommand = draft.startCommand
+            .normalizingShellPunctuation()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if let s = draft.stopCommand {
-            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = s
+                .normalizingShellPunctuation()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             draft.stopCommand = trimmed.isEmpty ? nil : trimmed
         }
 
@@ -516,7 +521,9 @@ struct LauncherEntryEditor: View {
             )
         case .commandExitZero:
             draft.healthProbe = .commandExitZero(
-                command: probeCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+                command: probeCommand
+                    .normalizingShellPunctuation()
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
             )
         case .egressCidrMatch:
             let url = URL(string: probeURLText) ?? HealthProbe.defaultProbeURL
@@ -530,5 +537,71 @@ struct LauncherEntryEditor: View {
         }
 
         onSave(draft)
+    }
+}
+
+private struct ShellCommandEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let textView = NSTextView(frame: .zero)
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
+        textView.textColor = .white
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.insertionPointColor = .white
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.smartInsertDeleteEnabled = false
+        textView.textContainerInset = NSSize(width: 6, height: 6)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.autoresizingMask = [.width]
+        textView.string = text
+
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding var text: String
+        weak var textView: NSTextView?
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+        }
     }
 }
