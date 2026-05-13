@@ -44,10 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let seed = ShuntSettings(
                 managedApps: [
                     ManagedApp(bundleID: "com.craraque.shunt.test", displayName: "ShuntTest", enabled: true),
-                    ManagedApp(bundleID: "com.microsoft.teams2", displayName: "Microsoft Teams", enabled: true),
-                    ManagedApp(bundleID: "com.microsoft.Outlook", displayName: "Microsoft Outlook", enabled: true)
+                    ManagedApp(bundleID: "com.example.browser", displayName: "Example Browser", enabled: true),
+                    ManagedApp(bundleID: "com.example.mail", displayName: "Example Mail", enabled: true)
                 ],
-                upstream: UpstreamProxy(host: "10.211.55.5", port: 1080, bindInterface: "bridge100")
+                upstream: UpstreamProxy(host: "127.0.0.1", port: 1080)
             )
             do {
                 try settingsStore.save(seed)

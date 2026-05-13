@@ -202,7 +202,7 @@ struct LauncherEntryEditor: View {
                 VStack(spacing: 0) {
                     row(label: "Name") {
                         AnyView(
-                            TextField("Tart VM — mac-zscaler-test", text: $draft.name)
+                            TextField("VM — proxy-vm", text: $draft.name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 380)
                         )

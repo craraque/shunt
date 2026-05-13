@@ -90,8 +90,8 @@ final class UpstreamLauncherTests: XCTestCase {
     func testCodableRoundTripPopulatedLauncher() throws {
         let entry1 = UpstreamLauncherEntry(
             name: "Tart VM",
-            startCommand: "tart run --no-graphics mac-zscaler-test",
-            stopCommand: "tart stop mac-zscaler-test",
+            startCommand: "tart run --no-graphics proxy-vm",
+            stopCommand: "tart stop proxy-vm",
             healthProbe: .egressDiffersFromDirect(probeURL: HealthProbe.defaultProbeURL),
             startTimeoutSeconds: 90
         )

@@ -2,7 +2,7 @@
 
 ## Product Context
 - **What this is:** Native macOS menu-bar utility that routes outbound TCP traffic from user-selected apps through a configurable SOCKS5 upstream, leaving every other app on the host network.
-- **Who it's for:** macOS power users — developers, personal-device selected workers, security researchers, people who want selective traffic routing without a device-wide VPN.
+- **Who it's for:** macOS power users — developers, researchers, and advanced users who want selective traffic routing without a device-wide VPN.
 - **Space/industry:** macOS developer & network utilities. Reference peers: Proxyman, Little Snitch, Charles Proxy, Tailscale.
 - **Project type:** Native macOS app (SwiftUI + AppKit, Apple Silicon, Developer ID distribution). Not a web product.
 

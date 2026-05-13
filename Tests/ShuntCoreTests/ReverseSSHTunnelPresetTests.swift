@@ -38,7 +38,7 @@ final class ReverseSSHTunnelPresetTests: XCTestCase {
             sshUser: "tunnel",
             hostPort: 2080,
             remoteSocksPort: 1080,
-            sshIdentityPath: "/Users/alice/.ssh/shunt_tunnel"
+            sshIdentityPath: "~/.ssh/shunt_tunnel"
         )
 
         let command = preset.launcher.stages[0].entries[0].startCommand

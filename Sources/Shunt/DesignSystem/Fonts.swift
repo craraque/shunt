@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Shunt design system — typography tokens.
-// Source of truth: /Users/cesar/dev/shunt/DESIGN.md §Typography.
+// Source of truth: DESIGN.md §Typography.
 
 extension Font {
     /// 28pt semibold, SF Pro Display. About tab hero, onboarding.

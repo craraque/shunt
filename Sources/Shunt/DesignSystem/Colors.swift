@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Shunt design system — color tokens.
-// Source of truth: /Users/cesar/dev/shunt/DESIGN.md §Color.
+// Source of truth: DESIGN.md §Color.
 
 extension Color {
     /// Primary brand + primary action. Used for focus, active sidebar row, primary button.

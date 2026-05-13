@@ -19,7 +19,7 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSSystemExtensionUsageDescription</key>
-	<string>Shunt routes per-app traffic to an isolated virtual machine running the corporate VPN, keeping personal traffic on the host network.</string>
+	<string>Shunt routes selected app traffic through a user-defined upstream while leaving other traffic on the default network.</string>
 	<key>NetworkExtension</key>
 	<dict>
 		<key>NEMachServiceName</key>

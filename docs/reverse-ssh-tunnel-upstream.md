@@ -23,7 +23,7 @@ macOS host / Shunt
           │
 VM / container / remote environment
   SOCKS5 = 127.0.0.1:1080
-  VPN/upstream provider/Surfshark/etc owns egress
+  user-managed upstream owns egress
 ```
 
 The important part is the direction: the VM/remote side opens SSH **back to the host**, and the host receives a loopback listener via `ssh -R`.

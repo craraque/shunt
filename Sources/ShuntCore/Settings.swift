@@ -33,8 +33,8 @@ public struct UpstreamProxy: Codable, Hashable {
 
     /// Phase 7 — when true, SOCKS5 CONNECT requests use ATYP=0x03 (domain
     /// name) for FQDN destinations, deferring DNS resolution to the upstream
-    /// proxy. Improves hostname-based filtering at the upstream (Zscaler URL
-    /// policy, SNI matching) and avoids DNS leaks of routed hostnames to the
+    /// proxy. Improves hostname-based filtering at the upstream (for URL
+    /// policy or SNI matching) and avoids DNS leaks of routed hostnames to the
     /// host's local resolvers.
     ///
     /// Falls back automatically to ATYP=0x01 / 0x04 when the destination is

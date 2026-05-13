@@ -1,6 +1,6 @@
 # Shunt Local Proxy Validation Plan
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task if/when Cesar approves execution.
+> Implementation note: execute this plan task-by-task and verify each phase before continuing.
 
 **Goal:** Validate whether Shunt can correctly route only selected macOS app traffic through a local test proxy, without using upstream provider.
 
@@ -16,7 +16,7 @@ This plan is for **validation**, not production hardening. It deliberately avoid
 
 ## Locality / Git Safety
 
-- Any code changes Hermes makes stay local in `/path/to/shunt` unless explicitly asked to push.
+- Any code changes stay local in `/path/to/shunt` unless explicitly pushed.
 - I will not push, tag, release, notarize, or install over `/Applications/Shunt.app` without explicit instruction.
 - Recommended workflow: create a local branch, make fixes/tests there, then show diff.
 
@@ -47,7 +47,7 @@ We need to prove these claims:
 
 Use this first. Lowest moving parts.
 
-Cesar previously found `microsocks` unreliable for this scenario; use `3proxy` as the preferred local SOCKS5 harness.
+`3proxy` is the preferred local SOCKS5 harness for this scenario.
 
 Preferred:
 
@@ -70,7 +70,7 @@ socks -p1080 -i127.0.0.1 -e127.0.0.1
 ```
 
 Pros:
-- Known-good for Cesar's prior tests.
+- Known-good for local SOCKS5 validation.
 - Fast setup.
 - Easy to observe logs.
 - Good for validating Shunt's SOCKS5 behavior.
