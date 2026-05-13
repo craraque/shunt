@@ -20,9 +20,9 @@ public struct UpstreamProxy: Codable, Hashable {
     public var host: String
     public var port: UInt16
     /// nil = use the host's default routing table. Set to an interface name
-    /// (e.g. "bridge100" for Parallels shared network) to bypass NECP scoping
-    /// and force traffic out a specific NIC. Required when the proxy lives
-    /// on a virtual bridge not reachable via the primary interface.
+    /// (e.g. "bridge100" for a virtual shared network) to force upstream
+    /// traffic out a specific NIC. Required when the proxy lives on a virtual
+    /// bridge not reachable via the primary interface.
     public var bindInterface: String?
 
     /// SOCKS5 username/password auth. When BOTH are non-empty, the bridge
@@ -230,11 +230,10 @@ public struct UpstreamLauncher: Codable, Hashable {
 
 /// How the engine decides an entry is "ready". The first two modes only look
 /// at the upstream socket; the last two validate the end-to-end egress path
-/// (ZCC auth gate, geo-shift proxy, etc.).
+/// through the configured upstream.
 public enum HealthProbe: Codable, Hashable {
-    /// TCP connect to `upstream.host:upstream.port`. Fast, no false negatives
-    /// on the happy path, but false-positive during the "daemon up, ZCC auth
-    /// pending" window.
+    /// TCP connect to `upstream.host:upstream.port`. Fast, but it only proves
+    /// that the local upstream listener is accepting connections.
     case portOpen
     /// TCP connect + SOCKS5 greeting exchange (`05 01 00` → `05 00`). Proves a
     /// SOCKS5 server is answering; still doesn't validate upstream egress.
@@ -267,8 +266,8 @@ public enum HealthProbe: Codable, Hashable {
 public struct HostPattern: Codable, Hashable, Identifiable {
     public var id: UUID
     public enum Kind: String, Codable, CaseIterable, Hashable {
-        case exact    // "teams.microsoft.com" — exact hostname match (case-insensitive)
-        case suffix   // "*.corp.com" — matches "a.b.corp.com" and "corp.com"
+        case exact    // "api.example.com" — exact hostname match (case-insensitive)
+        case suffix   // "*.example.com" — matches "a.b.example.com" and "example.com"
         case cidr     // "10.0.0.0/8" — destination IP match (v4 or v6)
     }
     public var kind: Kind
