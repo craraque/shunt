@@ -81,24 +81,35 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
     // in-memory snapshot so flows already in flight continue on the old
     // bridges while new flows match against the updated rules. NE serializes
     // provider callbacks on one queue, so no lock is needed.
+    //
+    // Reply ordering: ack as early as possible. NE serializes this callback
+    // behind every handleNewFlow currently in flight, and Apple's internal
+    // XPC reply window for sendProviderMessage is short — under sustained
+    // Teams/Outlook flow bursts the deferred ack was being dropped and the
+    // main app saw `<no reply>`. Decoding is the only step that can fail
+    // in a way the main app needs to learn about, so we decode first, ack
+    // based on that, and do the (always-succeeds) assignment afterward.
     override func handleAppMessage(
         _ messageData: Data,
         completionHandler: ((Data?) -> Void)? = nil
     ) {
+        let newSettings: ShuntSettings
         do {
-            let newSettings = try JSONDecoder().decode(ShuntSettings.self, from: messageData)
-            let newRules = newSettings.rules.filter { $0.enabled && $0.isValid }
-            activeRules = newRules
-            upstream = newSettings.upstream
-            let summary = newRules
-                .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
-                .joined(separator: "; ")
-            logger.info("applyRulesLive; rules=\(summary, privacy: .public) upstream=\(self.upstream.host, privacy: .public):\(self.upstream.port, privacy: .public)")
-            completionHandler?(Data("ok".utf8))
+            newSettings = try JSONDecoder().decode(ShuntSettings.self, from: messageData)
         } catch {
             logger.error("applyRulesLive decode failed: \(error.localizedDescription, privacy: .public)")
             completionHandler?(Data("err:\(error.localizedDescription)".utf8))
+            return
         }
+        completionHandler?(Data("ok".utf8))
+
+        let newRules = newSettings.rules.filter { $0.enabled && $0.isValid }
+        activeRules = newRules
+        upstream = newSettings.upstream
+        let summary = newRules
+            .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
+            .joined(separator: "; ")
+        logger.notice("applyRulesLive applied; rules=\(summary, privacy: .public) upstream=\(self.upstream.host, privacy: .public):\(self.upstream.port, privacy: .public)")
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {

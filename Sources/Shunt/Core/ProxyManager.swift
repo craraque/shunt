@@ -234,26 +234,57 @@ final class ProxyManager {
                     }
                     do {
                         let payload = try JSONEncoder().encode(settings)
-                        try session.sendProviderMessage(payload) { reply in
-                            let ack = reply.flatMap { String(data: $0, encoding: .utf8) } ?? "<no reply>"
-                            if ack.hasPrefix("ok") {
-                                Log.info("applyRulesLive: provider ack=\(ack)")
-                                completion(.success(()))
-                            } else {
-                                Log.error("applyRulesLive: provider replied \(ack)")
-                                completion(.failure(NSError(
-                                    domain: "Shunt.ProxyManager",
-                                    code: 3,
-                                    userInfo: [NSLocalizedDescriptionKey: ack]
-                                )))
-                            }
-                        }
+                        Self.sendApplyMessage(session: session, payload: payload, retriesLeft: 1, completion: completion)
                     } catch {
                         Log.error("applyRulesLive sendProviderMessage failed: \(error.localizedDescription)")
                         completion(.failure(error))
                     }
                 }
             }
+        }
+    }
+
+    /// Single-attempt send used by `applyRulesLive`, with bounded retry on
+    /// `<no reply>`. `applyRulesLive` is idempotent (the provider re-applies
+    /// the full settings snapshot on every call), so reintenting after a
+    /// dropped XPC ack is safe. We only retry on `<no reply>` — actual
+    /// provider-side errors (`err:...`) are surfaced immediately.
+    private static func sendApplyMessage(
+        session: NETunnelProviderSession,
+        payload: Data,
+        retriesLeft: Int,
+        completion: @escaping (Result<Void, Swift.Error>) -> Void
+    ) {
+        do {
+            try session.sendProviderMessage(payload) { reply in
+                let ack = reply.flatMap { String(data: $0, encoding: .utf8) } ?? "<no reply>"
+                if ack.hasPrefix("ok") {
+                    Log.info("applyRulesLive: provider ack=\(ack)")
+                    completion(.success(()))
+                    return
+                }
+                if ack == "<no reply>", retriesLeft > 0 {
+                    Log.info("applyRulesLive: <no reply>, retrying once after 300ms (retriesLeft=\(retriesLeft))")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        sendApplyMessage(
+                            session: session,
+                            payload: payload,
+                            retriesLeft: retriesLeft - 1,
+                            completion: completion
+                        )
+                    }
+                    return
+                }
+                Log.error("applyRulesLive: provider replied \(ack)")
+                completion(.failure(NSError(
+                    domain: "Shunt.ProxyManager",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: ack]
+                )))
+            }
+        } catch {
+            Log.error("applyRulesLive sendProviderMessage threw: \(error.localizedDescription)")
+            completion(.failure(error))
         }
     }
 
