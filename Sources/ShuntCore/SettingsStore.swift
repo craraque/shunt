@@ -12,6 +12,15 @@ public final class SettingsStore {
     public static let providerConfigKey = "shuntSettings"
     private static let fileName = "settings.v1.json"
 
+    /// Darwin notification posted by the main app after a successful
+    /// `saveToPreferences()` so the running system extension can re-read
+    /// its `protocolConfiguration` and swap rules in-memory without a
+    /// tunnel restart. We use Darwin notifications because Apple's
+    /// `NETunnelProviderSession.sendProviderMessage()` silently drops
+    /// messages destined for `NETransparentProxyProvider` on current
+    /// macOS — the SE never receives `handleAppMessage`.
+    public static let applyRulesDarwinNotification = "com.craraque.shunt.applyRules"
+
     public enum Error: Swift.Error {
         case containerUnavailable
     }

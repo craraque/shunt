@@ -6,8 +6,14 @@ import os
 final class ShuntProxyProvider: NETransparentProxyProvider {
     private let logger = Logger(subsystem: "com.craraque.shunt.proxy", category: "provider")
 
+    // activeRules + upstream are read on every handleNewFlow (NE-callback
+    // queue) AND written when the main app posts the applyRules Darwin
+    // notification (a different queue), so they need a lock. Pre-Darwin
+    // they were only touched on the NE callback queue and Apple's
+    // serialization made the lock unnecessary.
     private var activeRules: [Rule] = []
     private var upstream = UpstreamProxy()
+    private let stateLock = NSLock()
 
     private var bridges: [ObjectIdentifier: SOCKS5Bridge] = [:]
     private let bridgesLock = NSLock()
@@ -16,15 +22,8 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         options: [String: Any]? = nil,
         completionHandler: @escaping (Error?) -> Void
     ) {
-        let proto = self.protocolConfiguration as? NETunnelProviderProtocol
-        let settings = SettingsStore.decodeFromProvider(proto?.providerConfiguration)
-        activeRules = settings.rules.filter { $0.enabled && $0.isValid }
-        upstream = settings.upstream
-
-        let ruleSummary = activeRules
-            .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
-            .joined(separator: "; ")
-        logger.info("startProxy; rules=\(ruleSummary, privacy: .public) upstream=\(self.upstream.host, privacy: .public):\(self.upstream.port, privacy: .public) bindIf=\(self.upstream.bindInterface ?? "none", privacy: .public)")
+        reloadSettingsFromProtocolConfiguration(reason: "startProxy")
+        registerApplyRulesObserver()
 
         let tunnelSettings = NETransparentProxyNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         let tcp = NENetworkRule(
@@ -61,6 +60,7 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         completionHandler: @escaping () -> Void
     ) {
         logger.info("stopProxy reason=\(reason.rawValue, privacy: .public)")
+        unregisterApplyRulesObserver()
         closeActiveBridges()
         completionHandler()
     }
@@ -76,43 +76,90 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         }
     }
 
-    // Live rule/upstream update without cycling the tunnel. The containing
-    // app sends the full encoded ShuntSettings JSON here; we swap the
-    // in-memory snapshot so flows already in flight continue on the old
-    // bridges while new flows match against the updated rules. NE serializes
-    // provider callbacks on one queue, so no lock is needed.
+    // Re-read settings from the current `protocolConfiguration` and swap
+    // `activeRules` / `upstream` under the state lock. NE keeps
+    // `protocolConfiguration` updated on the running extension after the
+    // main app calls `manager.saveToPreferences()`, so this re-reads the
+    // current source of truth without any IPC dance with the main app.
     //
-    // Reply ordering: ack as early as possible. NE serializes this callback
-    // behind every handleNewFlow currently in flight, and Apple's internal
-    // XPC reply window for sendProviderMessage is short — under sustained
-    // Teams/Outlook flow bursts the deferred ack was being dropped and the
-    // main app saw `<no reply>`. Decoding is the only step that can fail
-    // in a way the main app needs to learn about, so we decode first, ack
-    // based on that, and do the (always-succeeds) assignment afterward.
+    // Called from `startProxy` (first load) and from the Darwin
+    // notification handler (live updates after Apply).
+    private func reloadSettingsFromProtocolConfiguration(reason: String) {
+        let proto = self.protocolConfiguration as? NETunnelProviderProtocol
+        let settings = SettingsStore.decodeFromProvider(proto?.providerConfiguration)
+        let newRules = settings.rules.filter { $0.enabled && $0.isValid }
+        let newUpstream = settings.upstream
+
+        stateLock.lock()
+        activeRules = newRules
+        upstream = newUpstream
+        stateLock.unlock()
+
+        let summary = newRules
+            .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
+            .joined(separator: "; ")
+        logger.notice("reloadSettings(\(reason, privacy: .public)); rules=\(summary, privacy: .public) upstream=\(newUpstream.host, privacy: .public):\(newUpstream.port, privacy: .public) bindIf=\(newUpstream.bindInterface ?? "none", privacy: .public)")
+    }
+
+    // Apple's NETunnelProviderSession.sendProviderMessage() silently drops
+    // messages to NETransparentProxyProvider on current macOS — the SE
+    // never receives `handleAppMessage`. We use cross-process Darwin
+    // notifications instead: the main app posts after a successful
+    // saveToPreferences (which updates `protocolConfiguration`), and we
+    // re-read the current config when the notification fires.
+    private func registerApplyRulesObserver() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterAddObserver(
+            center,
+            observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let me = Unmanaged<ShuntProxyProvider>.fromOpaque(observer).takeUnretainedValue()
+                me.reloadSettingsFromProtocolConfiguration(reason: "darwin-applyRules")
+            },
+            SettingsStore.applyRulesDarwinNotification as CFString,
+            nil,
+            .deliverImmediately
+        )
+        logger.info("Registered Darwin observer for \(SettingsStore.applyRulesDarwinNotification, privacy: .public)")
+    }
+
+    private func unregisterApplyRulesObserver() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        let observer = Unmanaged.passUnretained(self).toOpaque()
+        CFNotificationCenterRemoveEveryObserver(center, observer)
+    }
+
+    // Fallback if Apple ever fixes sendProviderMessage delivery. Today this
+    // is never called for NETransparentProxyProvider, but keeping the
+    // handler keeps the wire compatible.
     override func handleAppMessage(
         _ messageData: Data,
         completionHandler: ((Data?) -> Void)? = nil
     ) {
-        let newSettings: ShuntSettings
-        do {
-            newSettings = try JSONDecoder().decode(ShuntSettings.self, from: messageData)
-        } catch {
-            logger.error("applyRulesLive decode failed: \(error.localizedDescription, privacy: .public)")
-            completionHandler?(Data("err:\(error.localizedDescription)".utf8))
+        guard let newSettings = try? JSONDecoder().decode(ShuntSettings.self, from: messageData) else {
+            completionHandler?(Data("err:decode".utf8))
             return
         }
         completionHandler?(Data("ok".utf8))
-
         let newRules = newSettings.rules.filter { $0.enabled && $0.isValid }
+        stateLock.lock()
         activeRules = newRules
         upstream = newSettings.upstream
-        let summary = newRules
-            .map { "\($0.name)[apps=\($0.apps.count),hosts=\($0.hosts.count),\($0.action.rawValue)]" }
-            .joined(separator: "; ")
-        logger.notice("applyRulesLive applied; rules=\(summary, privacy: .public) upstream=\(self.upstream.host, privacy: .public):\(self.upstream.port, privacy: .public)")
+        stateLock.unlock()
+        logger.notice("handleAppMessage applied (legacy path)")
     }
 
     override func handleNewFlow(_ flow: NEAppProxyFlow) -> Bool {
+        // Snapshot the rule/upstream state under the lock so the rest of
+        // the method works against a consistent view (a Darwin-notification
+        // swap on another thread can otherwise interleave).
+        stateLock.lock()
+        let rules = activeRules
+        let currentUpstream = upstream
+        stateLock.unlock()
+
         let source = flow.metaData.sourceAppSigningIdentifier
 
         guard let tcp = flow as? NEAppProxyTCPFlow else {
@@ -156,7 +203,7 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         //   • No match → pass through (default transparent-proxy behavior).
         var matched: Rule.Action? = nil
         var matchedRuleName: String = ""
-        for rule in activeRules where
+        for rule in rules where
             HostMatcher.ruleMatches(rule, bundleID: source, hostname: hostnameForMatch, ip: ipForMatch)
         {
             if rule.action == .direct {
@@ -187,7 +234,7 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         // upstream rejects domain-name CONNECT, or for debugging IP-based
         // rules.
         let targetHost: String
-        if upstream.useRemoteDNS && !preResolved.isEmpty && !HostMatcher.isIPLiteral(preResolved) {
+        if currentUpstream.useRemoteDNS && !preResolved.isEmpty && !HostMatcher.isIPLiteral(preResolved) {
             targetHost = preResolved
         } else {
             targetHost = endpointHost
@@ -196,11 +243,11 @@ final class ShuntProxyProvider: NETransparentProxyProvider {
         logger.info("CLAIM \(source, privacy: .public) → \(targetHost, privacy: .public):\(port, privacy: .public) (endpoint=\(endpointHost, privacy: .public))")
         let bridge = SOCKS5Bridge(
             flow: tcp,
-            socksHost: upstream.host,
-            socksPort: upstream.port,
-            bindInterface: upstream.bindInterface,
-            username: upstream.username,
-            password: upstream.password,
+            socksHost: currentUpstream.host,
+            socksPort: currentUpstream.port,
+            bindInterface: currentUpstream.bindInterface,
+            username: currentUpstream.username,
+            password: currentUpstream.password,
             remoteHost: targetHost,
             remotePort: port,
             logger: logger

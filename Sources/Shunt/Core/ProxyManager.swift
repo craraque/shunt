@@ -206,21 +206,6 @@ final class ProxyManager {
                     return
                 }
                 manager.loadFromPreferences { _ in
-                    let status = manager.connection.status
-                    guard status == .connected || status == .reasserting else {
-                        Log.info("applyRulesLive: tunnel not active (status=\(status.rawValue)) — providerConfiguration persisted; provider will read on next start")
-                        completion(.success(()))
-                        return
-                    }
-                    guard let session = manager.connection as? NETunnelProviderSession else {
-                        Log.error("applyRulesLive: connection is not NETunnelProviderSession")
-                        completion(.failure(NSError(
-                            domain: "Shunt.ProxyManager",
-                            code: 2,
-                            userInfo: [NSLocalizedDescriptionKey: "Tunnel session unavailable"]
-                        )))
-                        return
-                    }
                     let extensionHealth = SystemExtensionManager.currentHealth()
                     if extensionHealth.status == .updateRequired || extensionHealth.status == .awaitingUserApproval || extensionHealth.status == .restartRequired {
                         let message = "Configuration saved. Live apply requires System Extension update (active \(extensionHealth.activeDisplay), bundled \(extensionHealth.bundledDisplay))."
@@ -232,60 +217,38 @@ final class ProxyManager {
                         )))
                         return
                     }
-                    do {
-                        let payload = try JSONEncoder().encode(settings)
-                        Self.sendApplyMessage(session: session, payload: payload, retriesLeft: 1, completion: completion)
-                    } catch {
-                        Log.error("applyRulesLive sendProviderMessage failed: \(error.localizedDescription)")
-                        completion(.failure(error))
+                    let status = manager.connection.status
+                    guard status == .connected || status == .reasserting else {
+                        Log.info("applyRulesLive: tunnel not active (status=\(status.rawValue)) — providerConfiguration persisted; provider will read on next start")
+                        completion(.success(()))
+                        return
                     }
+                    // Apple's `NETunnelProviderSession.sendProviderMessage()`
+                    // silently drops messages destined for
+                    // `NETransparentProxyProvider` on current macOS — the SE
+                    // never receives `handleAppMessage`. Trigger the live
+                    // re-read via a cross-process Darwin notification
+                    // instead; NE has already updated the SE's
+                    // `protocolConfiguration` in-place via the preceding
+                    // `saveToPreferences`, so the SE just needs the cue to
+                    // re-read it.
+                    Self.postApplyRulesDarwinNotification()
+                    Log.info("applyRulesLive: posted Darwin notification \(SettingsStore.applyRulesDarwinNotification)")
+                    completion(.success(()))
                 }
             }
         }
     }
 
-    /// Single-attempt send used by `applyRulesLive`, with bounded retry on
-    /// `<no reply>`. `applyRulesLive` is idempotent (the provider re-applies
-    /// the full settings snapshot on every call), so reintenting after a
-    /// dropped XPC ack is safe. We only retry on `<no reply>` — actual
-    /// provider-side errors (`err:...`) are surfaced immediately.
-    private static func sendApplyMessage(
-        session: NETunnelProviderSession,
-        payload: Data,
-        retriesLeft: Int,
-        completion: @escaping (Result<Void, Swift.Error>) -> Void
-    ) {
-        do {
-            try session.sendProviderMessage(payload) { reply in
-                let ack = reply.flatMap { String(data: $0, encoding: .utf8) } ?? "<no reply>"
-                if ack.hasPrefix("ok") {
-                    Log.info("applyRulesLive: provider ack=\(ack)")
-                    completion(.success(()))
-                    return
-                }
-                if ack == "<no reply>", retriesLeft > 0 {
-                    Log.info("applyRulesLive: <no reply>, retrying once after 300ms (retriesLeft=\(retriesLeft))")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        sendApplyMessage(
-                            session: session,
-                            payload: payload,
-                            retriesLeft: retriesLeft - 1,
-                            completion: completion
-                        )
-                    }
-                    return
-                }
-                Log.error("applyRulesLive: provider replied \(ack)")
-                completion(.failure(NSError(
-                    domain: "Shunt.ProxyManager",
-                    code: 3,
-                    userInfo: [NSLocalizedDescriptionKey: ack]
-                )))
-            }
-        } catch {
-            Log.error("applyRulesLive sendProviderMessage threw: \(error.localizedDescription)")
-            completion(.failure(error))
-        }
+    private static func postApplyRulesDarwinNotification() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(
+            center,
+            CFNotificationName(SettingsStore.applyRulesDarwinNotification as CFString),
+            nil,
+            nil,
+            true
+        )
     }
 
     /// Restart the NE tunnel to force the provider to re-read state from
